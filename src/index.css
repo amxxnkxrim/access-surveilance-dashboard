@@ -1,0 +1,50 @@
+@import 'tailwindcss';
+
+:root {
+  color: #0f172a;
+  background-color: #f1f5f9;
+  font-family: Inter, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f1f5f9;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.input {
+  width: 100%;
+  border: 1px solid #dbe3ee;
+  border-radius: 0.8rem;
+  background: #f8fafc;
+  padding: 0.7rem 0.9rem;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input:focus {
+  border-color: #2675D8;
+  box-shadow: 0 0 0 3px rgba(38, 117, 216, 0.12);
+}

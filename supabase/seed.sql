@@ -1,0 +1,31 @@
+insert into company_settings (
+  company_name,
+  company_logo_url,
+  business_address,
+  phone,
+  email,
+  website,
+  company_registration,
+  vat_registration_status,
+  vat_registration_number,
+  quotation_terms,
+  invoice_terms,
+  default_quotation_expiry_days,
+  default_payment_terms,
+  document_numbering
+) values (
+  'Access Surveillance',
+  '',
+  '12 Umhlanga Road, Durban, South Africa',
+  '+27 31 555 0144',
+  'admin@accesssurveillance.co.za',
+  'https://accesssurveillance.co.za',
+  '2024/123456/07',
+  true,
+  'VAT 456789012',
+  'Payment due within 14 days of approval. Installation work is subject to site conditions.',
+  'Payment due within 30 days of invoice date. Interest may be charged on overdue balances.',
+  14,
+  'Net 30',
+  'AS-INV-2026'
+) on conflict do nothing;
