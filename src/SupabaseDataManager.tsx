@@ -522,7 +522,7 @@ export default function SupabaseDataManager({ onDataChanged }: { onDataChanged: 
                     setSelectedName(item.name)
                   }
                 }}
-                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${selectedName === item.name ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${selectedName === item.name ? 'bg-[#EDF3EC] font-medium text-[#163F2F]' : 'text-slate-600 hover:bg-slate-50'}`}
               >
                 <span>{item.label}</span>
                 <span className="text-xs text-slate-400">{item.name === selectedName ? rows.length : ''}</span>
@@ -540,7 +540,7 @@ export default function SupabaseDataManager({ onDataChanged }: { onDataChanged: 
             <div className="flex flex-wrap gap-2">
               <input aria-label="Search rows" placeholder="Search rows" value={search} onChange={(event) => setSearch(event.target.value)} className="input w-48" />
               <button type="button" onClick={() => void loadRows()} disabled={isLoading} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 disabled:opacity-50"><RefreshCw size={15} /> Refresh</button>
-              {canInsert && <button type="button" onClick={openCreate} className="inline-flex items-center gap-2 rounded-xl bg-[#101B2B] px-3 py-2 text-sm font-medium text-white"><Plus size={15} /> Add record</button>}
+              {canInsert && <button type="button" onClick={openCreate} className="inline-flex items-center gap-2 rounded-xl bg-[#163F2F] px-3 py-2 text-sm font-medium text-white"><Plus size={15} /> Add record</button>}
             </div>
           </div>
 
@@ -611,7 +611,7 @@ export default function SupabaseDataManager({ onDataChanged }: { onDataChanged: 
               {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
               <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
                 <button type="button" disabled={isSaving} onClick={closeForm} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
-                <button type="submit" disabled={isSaving} className="rounded-xl bg-[#101B2B] px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{isSaving ? 'Saving...' : 'Save to Supabase'}</button>
+                <button type="submit" disabled={isSaving} className="rounded-xl bg-[#163F2F] px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{isSaving ? 'Saving...' : 'Save to Supabase'}</button>
               </div>
             </form>
           </section>

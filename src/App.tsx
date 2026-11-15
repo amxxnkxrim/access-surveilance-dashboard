@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -84,6 +84,7 @@ interface Job {
   siteAddress: string
   priority: 'Low' | 'Medium' | 'High' | 'Urgent'
   assignedTechnician: string
+  createdDate: string
   scheduledDate: string
   scheduledTime: string
   status: JobStatus
@@ -144,6 +145,52 @@ interface Invoice {
   status: 'Draft' | 'Sent' | 'Partially paid' | 'Paid' | 'Overdue' | 'Cancelled'
 }
 
+interface Payment {
+  id: string
+  invoiceId: string
+  paymentDate: string
+  amount: number
+  paymentMethod: string
+  reference: string
+  notes: string
+}
+
+type ExpenseCategory = 'Fuel' | '20mm pipe' | '25mm pipe' | 'Cameras' | 'Sprag' | 'Other equipment' | 'Wages' | 'Other'
+
+interface JobExpense {
+  id: string
+  jobId: string
+  expenseDate: string
+  category: ExpenseCategory
+  description: string
+  amount: number
+}
+
+interface ExpenseEntryLine {
+  id: string
+  category: ExpenseCategory
+  itemName: string
+  quantity: string
+  unitPrice: string
+}
+
+interface FinancialDocumentExtraction {
+  invoiceReference: string
+  documentDate: string
+  dueDate: string
+  counterparty: string
+  subtotal: number
+  vat: number
+  total: number
+  description: string
+  expenseCategory: string
+}
+
+interface AdvisorMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 interface StaffMember {
   id: string
   staffId: string
@@ -191,9 +238,19 @@ interface AppState {
   quotations: Quotation[]
   maintenance: MaintenanceAgreement[]
   invoices: Invoice[]
+  payments: Payment[]
+  expenses: JobExpense[]
   staff: StaffMember[]
   notifications: NotificationItem[]
   companySettings: CompanySettings
+}
+
+interface GlobalSearchResult {
+  id: string
+  label: string
+  detail: string
+  kind: 'Customer' | 'Job' | 'Equipment'
+  path: string
 }
 
 interface QuickFormField {
@@ -306,11 +363,14 @@ const navItems = [
   { label: 'Quotations', to: '/quotations', icon: FileText, roles: ['ADMIN', 'OFFICE_ADMIN'] },
   { label: 'Maintenance', to: '/maintenance', icon: CalendarDays, roles },
   { label: 'Invoices', to: '/invoices', icon: CreditCard, roles: ['ADMIN', 'OFFICE_ADMIN'] },
+  { label: 'Profit & expenses', to: '/profit', icon: CircleDollarSign, roles: ['ADMIN', 'OFFICE_ADMIN'] },
   { label: 'Staff', to: '/staff', icon: UserCog, roles: ['ADMIN'] },
   { label: 'Reports', to: '/reports', icon: Gauge, roles: ['ADMIN', 'OFFICE_ADMIN'] },
   { label: 'Settings', to: '/settings', icon: Settings, roles: ['ADMIN'] },
   { label: 'Data manager', to: '/data', icon: Database, roles: ['ADMIN'] },
 ]
+
+const expenseCategories: ExpenseCategory[] = ['Fuel', '20mm pipe', '25mm pipe', 'Cameras', 'Sprag', 'Other equipment', 'Wages', 'Other']
 
 const seedState: AppState = {
   users: [
@@ -329,9 +389,9 @@ const seedState: AppState = {
     { id: 'e-3', equipmentId: 'AS-EQ-2026-003', customerId: 'c-3', installationAddress: '71 Marine Parade', category: 'Network switches', manufacturer: 'Ubiquiti', model: 'USW-Enterprise-48P', serialNumber: 'UBI-93441', quantity: 2, installationDate: '2026-03-11', warrantyExpiry: '2029-03-11', condition: 'Excellent', status: 'Active', technician: 'Sibusiso Khumalo', notes: 'PoE switch for camera backbone.' },
   ],
   jobs: [
-    { id: 'j-1', jobReference: 'AS-J-2026-001', customer: 'Oakridge Apartments', category: 'New installation', description: 'Install CCTV and access control for the main gate and lobby.', siteAddress: '18 Wilger Road, Morningside', priority: 'High', assignedTechnician: 'Sibusiso Khumalo', scheduledDate: '2026-11-14', scheduledTime: '08:00', status: 'Scheduled', equipment: 'CCTV cameras, Access control systems', customerInstructions: 'Do not disturb tenants between 08:00 and 10:00.', internalNotes: 'Check backup power and NVR redundancy.', completionDate: '' },
-    { id: 'j-2', jobReference: 'AS-J-2026-002', customer: 'Aiden van Dyk', category: 'Maintenance', description: 'Quarterly alarm check and sensor servicing.', siteAddress: '42 Sunset Avenue, Berea', priority: 'Medium', assignedTechnician: 'Sibusiso Khumalo', scheduledDate: '2026-11-16', scheduledTime: '11:00', status: 'In progress', equipment: 'Ajax alarm systems', customerInstructions: 'Please keep gate open during testing.', internalNotes: 'Inspect battery reserve level.', completionDate: '' },
-    { id: 'j-3', jobReference: 'AS-J-2026-003', customer: 'North Beach Retail Park', category: 'Repair', description: 'Fault-finding for motion alert camera at loading bays.', siteAddress: '71 Marine Parade, North Beach', priority: 'Urgent', assignedTechnician: 'Sibusiso Khumalo', scheduledDate: '2026-11-12', scheduledTime: '14:00', status: 'Awaiting parts', equipment: 'CCTV cameras, Network switches', customerInstructions: 'Priority after 13:00 due to peak trade hours.', internalNotes: 'Awaiting replacement PoE injector.', completionDate: '' },
+    { id: 'j-1', jobReference: 'AS-J-2026-001', customer: 'Oakridge Apartments', category: 'New installation', description: 'Install CCTV and access control for the main gate and lobby.', siteAddress: '18 Wilger Road, Morningside', priority: 'High', assignedTechnician: 'Sibusiso Khumalo', createdDate: '2026-11-10', scheduledDate: '2026-11-14', scheduledTime: '08:00', status: 'Scheduled', equipment: 'CCTV cameras, Access control systems', customerInstructions: 'Do not disturb tenants between 08:00 and 10:00.', internalNotes: 'Check backup power and NVR redundancy.', completionDate: '' },
+    { id: 'j-2', jobReference: 'AS-J-2026-002', customer: 'Aiden van Dyk', category: 'Maintenance', description: 'Quarterly alarm check and sensor servicing.', siteAddress: '42 Sunset Avenue, Berea', priority: 'Medium', assignedTechnician: 'Sibusiso Khumalo', createdDate: '2026-11-15', scheduledDate: '2026-11-16', scheduledTime: '11:00', status: 'In progress', equipment: 'Ajax alarm systems', customerInstructions: 'Please keep gate open during testing.', internalNotes: 'Inspect battery reserve level.', completionDate: '' },
+    { id: 'j-3', jobReference: 'AS-J-2026-003', customer: 'North Beach Retail Park', category: 'Repair', description: 'Fault-finding for motion alert camera at loading bays.', siteAddress: '71 Marine Parade, North Beach', priority: 'Urgent', assignedTechnician: 'Sibusiso Khumalo', createdDate: '2026-11-10', scheduledDate: '2026-11-12', scheduledTime: '14:00', status: 'Awaiting parts', equipment: 'CCTV cameras, Network switches', customerInstructions: 'Priority after 13:00 due to peak trade hours.', internalNotes: 'Awaiting replacement PoE injector.', completionDate: '' },
   ],
   quotations: [
     { id: 'q-1', quotationReference: 'AS-Q-2026-001', customer: 'Oakridge Apartments', dateIssued: '2026-11-02', expiryDate: '2026-11-16', description: 'CCTV and access control upgrade quote', status: 'Approved', terms: 'Payment due within 14 days of approval.', items: [
@@ -351,6 +411,10 @@ const seedState: AppState = {
     { id: 'i-1', invoiceReference: 'AS-INV-2026-001', customer: 'Oakridge Apartments', jobReference: 'AS-J-2026-001', relatedQuotation: 'AS-Q-2026-001', invoiceDate: '2026-11-04', dueDate: '2026-11-18', subtotal: 20500, vat: 3075, total: 23575, amountPaid: 15000, outstandingBalance: 8575, status: 'Partially paid' },
     { id: 'i-2', invoiceReference: 'AS-INV-2026-002', customer: 'Aiden van Dyk', jobReference: 'AS-J-2026-002', relatedQuotation: 'AS-Q-2026-002', invoiceDate: '2026-11-07', dueDate: '2026-11-21', subtotal: 9800, vat: 0, total: 9800, amountPaid: 0, outstandingBalance: 9800, status: 'Overdue' },
   ],
+  payments: [
+    { id: 'p-1', invoiceId: 'i-1', paymentDate: '2026-11-08', amount: 15000, paymentMethod: 'Bank transfer', reference: 'Seed payment', notes: '' },
+  ],
+  expenses: [],
   staff: [
     { id: 's-1', staffId: 'AS-ST-001', fullName: 'Sibusiso Khumalo', phone: '+27 83 555 0199', email: 'tech@accesssurveillance.co.za', role: 'TECHNICIAN', employmentStatus: 'Active', dateJoined: '2025-03-12', skills: 'CCTV, access control, maintenance', notes: 'Lead field technician.' },
     { id: 's-2', staffId: 'AS-ST-002', fullName: 'Lerato Ndlovu', phone: '+27 71 555 4401', email: 'office@accesssurveillance.co.za', role: 'OFFICE_ADMIN', employmentStatus: 'Active', dateJoined: '2024-08-01', skills: 'Customer support, invoicing, scheduling', notes: 'Handles quotations and scheduling.' },
@@ -386,18 +450,68 @@ const loginSchema = z.object({
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(value)
 
+const readBlobAsBase64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onerror = () => reject(new Error('Could not read the selected document.'))
+  reader.onload = () => {
+    if (typeof reader.result !== 'string') {
+      reject(new Error('Could not read the selected document.'))
+      return
+    }
+
+    const separator = reader.result.indexOf(',')
+    if (separator < 0) {
+      reject(new Error('Could not read the selected document.'))
+      return
+    }
+
+    resolve(reader.result.slice(separator + 1))
+  }
+  reader.readAsDataURL(blob)
+})
+
+const prepareFinancialDocument = async (file: File) => {
+  let documentBlob: Blob = file
+  let mimeType = file.type
+
+  if (file.type.startsWith('image/')) {
+    const image = await createImageBitmap(file)
+    const scale = Math.min(1, 1800 / Math.max(image.width, image.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.width * scale))
+    canvas.height = Math.max(1, Math.round(image.height * scale))
+    const context = canvas.getContext('2d')
+    if (!context) {
+      image.close()
+      throw new Error('Could not prepare the image for scanning.')
+    }
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+    image.close()
+    documentBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob)
+        else reject(new Error('Could not compress the image for scanning.'))
+      }, 'image/jpeg', 0.82)
+    })
+    mimeType = 'image/jpeg'
+  }
+
+  return { mimeType, imageBase64: await readBlobAsBase64(documentBlob) }
+}
+
 const getStatusClass = (status: string) => {
   const base = 'inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium'
   if (status === 'Completed' || status === 'Approved' || status === 'Paid / Closed' || status === 'Active') {
-    return `${base} border-emerald-500/30 bg-emerald-500/10 text-emerald-600`
+    return `${base} border-[#2C8D58]/30 bg-[#2C8D58]/10 text-[#163F2F]`
   }
   if (status === 'Cancelled' || status === 'Rejected' || status === 'Expired') {
-    return `${base} border-red-500/30 bg-red-500/10 text-red-600`
+    return `${base} border-[#B91F26]/30 bg-[#B91F26]/10 text-[#7D1418]`
   }
   if (status === 'In progress' || status === 'Awaiting quotation' || status === 'Awaiting parts' || status === 'Partially paid' || status === 'Overdue') {
     return `${base} border-amber-500/30 bg-amber-500/10 text-amber-600`
   }
-  return `${base} border-blue-500/30 bg-blue-500/10 text-blue-600`
+  return `${base} border-[#163F2F]/20 bg-[#163F2F]/5 text-[#163F2F]`
 }
 
 const loadState = (): AppState => {
@@ -406,7 +520,17 @@ const loadState = (): AppState => {
   if (!stored) return seedState
 
   try {
-    return JSON.parse(stored) as AppState
+    const savedState = JSON.parse(stored) as Partial<AppState>
+    return {
+      ...seedState,
+      ...savedState,
+      jobs: (savedState.jobs ?? seedState.jobs).map((job) => ({
+        ...job,
+        createdDate: job.createdDate ?? '',
+      })),
+      payments: savedState.payments ?? [],
+      expenses: savedState.expenses ?? [],
+    }
   } catch {
     return seedState
   }
@@ -490,6 +614,15 @@ const mapCustomerRecord = (record: SupabaseRow): Customer => ({
   dateAdded: dateField(record, 'date_added') || dateField(record, 'created_at'),
 })
 
+const mapJobExpenseRecord = (record: SupabaseRow): JobExpense => ({
+  id: stringField(record, 'id'),
+  jobId: stringField(record, 'job_id'),
+  expenseDate: dateField(record, 'expense_date'),
+  category: expenseCategories.find((category) => category === stringField(record, 'category')) ?? 'Other',
+  description: stringField(record, 'description'),
+  amount: numberField(record, 'amount'),
+})
+
 const mapJobStatus = (value: string): JobStatus => {
   const statuses: JobStatus[] = ['New', 'Awaiting quotation', 'Quotation sent', 'Approved', 'Scheduled', 'In progress', 'Awaiting parts', 'Completed', 'Invoiced', 'Paid / Closed', 'Cancelled']
   return statuses.find((status) => status === value) ?? 'New'
@@ -523,6 +656,7 @@ const mapSupabaseAppState = (tables: Record<string, unknown>): AppState => {
       ? equipmentList.map((item) => String(item)).join(', ')
       : typeof equipmentList === 'string' ? equipmentList : ''
     const technician = profileById.get(stringField(row, 'assigned_technician_id'))
+    const createdAt = stringField(row, 'created_at')
 
     return {
       id: stringField(row, 'id'),
@@ -533,6 +667,7 @@ const mapSupabaseAppState = (tables: Record<string, unknown>): AppState => {
       siteAddress: stringField(row, 'site_address'),
       priority: ['Low', 'Medium', 'High', 'Urgent'].find((priority) => priority === stringField(row, 'priority')) as Job['priority'] ?? 'Medium',
       assignedTechnician: technician ? stringField(technician, 'full_name') : '',
+      createdDate: createdAt ? format(new Date(createdAt), 'yyyy-MM-dd') : '',
       scheduledDate: dateField(row, 'scheduled_date'),
       scheduledTime: stringField(row, 'scheduled_time'),
       status: mapJobStatus(stringField(row, 'status')),
@@ -640,6 +775,16 @@ const mapSupabaseAppState = (tables: Record<string, unknown>): AppState => {
     quotations,
     maintenance,
     invoices,
+    payments: rows('payments').map((row): Payment => ({
+      id: stringField(row, 'id'),
+      invoiceId: stringField(row, 'invoice_id'),
+      paymentDate: dateField(row, 'payment_date'),
+      amount: numberField(row, 'amount'),
+      paymentMethod: stringField(row, 'payment_method'),
+      reference: stringField(row, 'reference'),
+      notes: stringField(row, 'notes'),
+    })),
+    expenses: rows('job_expenses').map(mapJobExpenseRecord),
     staff: rows('staff').map((row): StaffMember => ({
       id: stringField(row, 'id'),
       staffId: stringField(row, 'staff_id'),
@@ -667,7 +812,7 @@ const mapSupabaseAppState = (tables: Record<string, unknown>): AppState => {
 const loadSupabaseAppState = async (): Promise<AppState> => {
   if (!supabase) throw new Error('Supabase is not configured.')
   const client = supabase
-  const tableNames = ['profiles', 'customers', 'equipment', 'jobs', 'job_assignments', 'job_notes', 'quotations', 'quotation_items', 'maintenance_agreements', 'maintenance_visits', 'invoices', 'invoice_items', 'payments', 'staff', 'notifications', 'documents', 'company_settings', 'activity_logs']
+  const tableNames = ['profiles', 'customers', 'equipment', 'jobs', 'job_assignments', 'job_notes', 'quotations', 'quotation_items', 'maintenance_agreements', 'maintenance_visits', 'invoices', 'invoice_items', 'payments', 'job_expenses', 'staff', 'notifications', 'documents', 'company_settings', 'activity_logs']
   const results = await Promise.all([
     client.from('profiles').select('*'),
     client.from('customers').select('*'),
@@ -682,6 +827,7 @@ const loadSupabaseAppState = async (): Promise<AppState> => {
     client.from('invoices').select('*'),
     client.from('invoice_items').select('*'),
     client.from('payments').select('*'),
+    client.from('job_expenses').select('*'),
     client.from('staff').select('*'),
     client.from('notifications').select('*'),
     client.from('documents').select('*'),
@@ -911,11 +1057,15 @@ function AppShell() {
       <Route element={session ? <AppLayout /> : <Navigate to="/" replace />}>
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/customers" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><CustomersPage /></RoleGuard>} />
+        <Route path="/customers/new" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><CustomersPage /></RoleGuard>} />
         <Route path="/equipment" element={<EquipmentPage />} />
         <Route path="/jobs" element={<JobsPage />} />
         <Route path="/quotations" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><QuotationsPage /></RoleGuard>} />
         <Route path="/maintenance" element={<MaintenancePage />} />
         <Route path="/invoices" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><InvoicesPage /></RoleGuard>} />
+        <Route path="/profit" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><ProfitExpensesPage /></RoleGuard>} />
+        <Route path="/profit/expenses" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><ProfitExpensesPage /></RoleGuard>} />
+        <Route path="/profit/invoices" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><ProfitExpensesPage /></RoleGuard>} />
         <Route path="/staff" element={<RoleGuard roles={['ADMIN']}><StaffPage /></RoleGuard>} />
         <Route path="/reports" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><ReportsPage /></RoleGuard>} />
         <Route path="/settings" element={<RoleGuard roles={['ADMIN']}><SettingsPage /></RoleGuard>} />
@@ -934,18 +1084,118 @@ function AppLayout() {
   const { session, appState, dataLoading, dataError, logout } = useAppContext()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [globalSearch, setGlobalSearch] = useState('')
   const location = useLocation()
-  const pageTitle = navItems.find((item) => item.to === location.pathname)?.label ?? 'Dashboard'
+  const navigate = useNavigate()
+  const pageTitle = navItems.find((item) => item.to === location.pathname)?.label
+    ?? (location.pathname.startsWith('/customers/') ? 'Customers' : location.pathname.startsWith('/profit/') ? 'Profit & expenses' : 'Dashboard')
 
   const unreadNotifications = appState.notifications.filter((item) => !item.read).length
+  const searchResults = useMemo<GlobalSearchResult[]>(() => {
+    const query = globalSearch.trim().toLocaleLowerCase()
+    if (!query) return []
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(query)) {
+      return appState.jobs
+        .filter((job) => job.createdDate === query)
+        .map((job) => ({
+          id: job.id,
+          label: job.jobReference,
+          detail: `${job.customer} · Created ${job.createdDate}`,
+          kind: 'Job' as const,
+          path: `/jobs?date=${encodeURIComponent(query)}&jobId=${encodeURIComponent(job.id)}`,
+        }))
+    }
+
+    const customers = appState.customers
+      .filter((customer) => [customer.fullName, customer.customerId, customer.phone, customer.email].some((value) => value.toLocaleLowerCase().includes(query)))
+      .map((customer) => ({
+        id: customer.id,
+        label: customer.fullName,
+        detail: `${customer.customerId} · ${customer.city}`,
+        kind: 'Customer' as const,
+        path: `/customers?customerId=${encodeURIComponent(customer.id)}`,
+      }))
+    const jobs = appState.jobs
+      .filter((job) => [job.jobReference, job.customer, job.description, job.category, job.status, job.scheduledDate, job.createdDate].some((value) => value.toLocaleLowerCase().includes(query)))
+      .map((job) => ({
+        id: job.id,
+        label: job.jobReference,
+        detail: `${job.customer} · Created ${job.createdDate || 'date not recorded'}`,
+        kind: 'Job' as const,
+        path: `/jobs?jobId=${encodeURIComponent(job.id)}`,
+      }))
+    const equipment = appState.equipment
+      .filter((item) => [item.equipmentId, item.model, item.manufacturer, item.category, item.serialNumber].some((value) => value.toLocaleLowerCase().includes(query)))
+      .map((item) => ({
+        id: item.id,
+        label: item.model || item.category,
+        detail: `${item.equipmentId} · ${item.category}`,
+        kind: 'Equipment' as const,
+        path: `/equipment?equipmentId=${encodeURIComponent(item.id)}`,
+      }))
+
+    return [...customers, ...jobs, ...equipment].slice(0, 10)
+  }, [appState.customers, appState.equipment, appState.jobs, globalSearch])
+  const renderSearch = (mobile = false) => (
+    <div className={`relative w-full ${mobile ? '' : 'max-w-sm'}`}>
+      <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+      <input
+        className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-[#2C8D58]"
+        placeholder="Search customers, jobs, equipment, or recorded date (YYYY-MM-DD)"
+        value={globalSearch}
+        aria-label="Search customers, jobs, equipment, or job dates"
+        aria-expanded={searchResults.length > 0 || Boolean(globalSearch.trim())}
+        onChange={(event) => setGlobalSearch(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setGlobalSearch('')
+          if (event.key === 'Enter' && searchResults[0]) {
+            navigate(searchResults[0].path)
+            setGlobalSearch('')
+          }
+        }}
+      />
+      {searchResults.length > 0 && (
+        <div className="absolute left-0 right-0 top-full z-40 mt-2 max-h-80 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+          {/^\d{4}-\d{2}-\d{2}$/.test(globalSearch.trim()) && (
+            <p className="px-3 py-2 text-xs font-semibold text-slate-500">
+              Jobs recorded {globalSearch.trim()} · {searchResults.length} found
+            </p>
+          )}
+          {searchResults.map((result) => (
+            <button
+              key={`${result.kind}-${result.id}`}
+              type="button"
+              className="flex w-full items-start justify-between gap-3 rounded-lg px-3 py-2 text-left hover:bg-slate-50"
+              onClick={() => {
+                navigate(result.path)
+                setGlobalSearch('')
+              }}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-slate-900">{result.label}</span>
+                <span className="block truncate text-xs text-slate-500">{result.detail}</span>
+              </span>
+              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-600">{result.kind}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {!searchResults.length && globalSearch.trim() && (
+        <div className="absolute left-0 right-0 top-full z-40 mt-2 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-500 shadow-xl">
+          {/^\d{4}-\d{2}-\d{2}$/.test(globalSearch.trim()) ? 'No jobs scheduled for this date.' : 'No matching customers, jobs, or equipment.'}
+        </div>
+      )}
+    </div>
+  )
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800">
+    <div className="dashboard-shell min-h-screen bg-slate-100 text-slate-800">
       <div className="flex min-h-screen">
-        <aside className={`fixed inset-y-0 left-0 z-30 w-72 border-r border-slate-200 bg-[#101B2B] text-slate-100 transition-transform duration-200 md:static md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <aside className={`dashboard-sidebar fixed inset-y-0 left-0 z-30 w-72 border-r border-slate-200 bg-[#13251F] text-slate-100 transition-transform duration-200 md:static md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <div className="flex h-20 items-center justify-between border-b border-slate-700 px-5">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2675D8] text-sm font-bold">AS</div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#163F2F] text-sm font-bold">AS</div>
               <div>
                 <p className="text-lg font-semibold">Access Surveillance</p>
                 <p className="text-xs text-slate-300">Business management</p>
@@ -959,7 +1209,7 @@ function AppLayout() {
             {navItems.map(({ label, to, icon: Icon, roles: allowedRoles }) => {
               if (session && !allowedRoles.includes(session.role)) return null
               return (
-                <NavLink key={to} to={to} className={({ isActive }) => `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${isActive ? 'bg-[#2675D8] text-white shadow-sm' : 'text-slate-200 hover:bg-slate-800'}`} onClick={() => setMobileOpen(false)}>
+                <NavLink key={to} to={to} className={({ isActive }) => `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${isActive ? 'bg-[#163F2F] text-white shadow-sm' : 'text-slate-200 hover:bg-slate-800'}`} onClick={() => setMobileOpen(false)}>
                   <Icon size={18} />
                   {label}
                 </NavLink>
@@ -969,7 +1219,7 @@ function AppLayout() {
 
           <div className="mt-auto border-t border-slate-700 p-4">
             <div className="mb-3 flex items-center gap-3 rounded-xl bg-slate-800/80 p-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#C6A15B] font-semibold text-[#101B2B]">{session?.name.split(' ').map((part) => part[0]).slice(0,2).join('')}</div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#B91F26] font-semibold text-white">{session?.name.split(' ').map((part) => part[0]).slice(0,2).join('')}</div>
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-white">{session?.name}</p>
                 <p className="text-xs text-slate-300">{session?.role}</p>
@@ -991,7 +1241,7 @@ function AppLayout() {
         </aside>
 
         <div className="flex-1">
-          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur-sm">
+          <header className="dashboard-header sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur-sm">
             <div className="flex items-center justify-between gap-4 px-4 py-3 md:px-6">
               <div className="flex items-center gap-3">
                 <button className="rounded-lg border border-slate-200 p-2 md:hidden" aria-label="open sidebar" onClick={() => setMobileOpen(true)}>
@@ -1004,10 +1254,7 @@ function AppLayout() {
               </div>
 
               <div className="hidden flex-1 items-center justify-end gap-3 md:flex">
-                <div className="relative w-full max-w-sm">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                  <input className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-[#2675D8]" placeholder="Search" />
-                </div>
+                {renderSearch()}
                 <div className="relative">
                   <button className="relative rounded-xl border border-slate-200 p-2.5 text-slate-600" aria-label="notifications" onClick={() => setNotificationsOpen((value) => !value)}>
                     <Bell size={18} />
@@ -1019,11 +1266,11 @@ function AppLayout() {
                     <div className="absolute right-0 top-12 w-80 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
                       <div className="mb-2 flex items-center justify-between">
                         <p className="font-semibold text-slate-900">Notifications</p>
-                        <button className="text-xs text-[#2675D8]" onClick={() => setNotificationsOpen(false)}>Close</button>
+                        <button className="text-xs text-[#163F2F]" onClick={() => setNotificationsOpen(false)}>Close</button>
                       </div>
                       <div className="space-y-2">
                         {appState.notifications.slice(0, 4).map((item) => (
-                          <div key={item.id} className={`rounded-xl border p-2 ${item.read ? 'border-slate-200 bg-slate-50' : 'border-[#2675D8]/30 bg-[#2675D8]/5'}`}>
+                          <div key={item.id} className={`rounded-xl border p-2 ${item.read ? 'border-slate-200 bg-slate-50' : 'border-[#2C8D58]/30 bg-[#2C8D58]/5'}`}>
                             <p className="text-sm font-medium text-slate-900">{item.title}</p>
                             <p className="mt-1 text-xs text-slate-500">{item.message}</p>
                           </div>
@@ -1042,13 +1289,14 @@ function AppLayout() {
                     {unreadNotifications > 0 && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-red-500"></span>}
                   </button>
                 </div>
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#101B2B] text-sm font-semibold text-white">{session?.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</div>
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#13251F] text-sm font-semibold text-white">{session?.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</div>
               </div>
             </div>
+            <div className="px-4 pb-3 md:hidden">{renderSearch(true)}</div>
           </header>
 
-          <main className="p-4 md:p-6">
-            {dataLoading && <div role="status" className="mb-4 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-700">Loading business records from Supabase...</div>}
+          <main className="dashboard-content p-4 md:p-6">
+            {dataLoading && <div role="status" className="mb-4 rounded-xl border border-[#2C8D58]/30 bg-[#2C8D58]/10 px-4 py-3 text-sm text-[#163F2F]">Loading business records from Supabase...</div>}
             {dataError && <div role="alert" className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700">Supabase data could not be loaded: {dataError}</div>}
             <Outlet />
           </main>
@@ -1102,10 +1350,10 @@ function LoginPage() {
   return (
     <div className="min-h-screen bg-[#0B1220] px-4 py-10 text-slate-100 md:px-8">
       <div className="mx-auto grid max-w-6xl gap-6 overflow-hidden rounded-3xl border border-slate-700 bg-slate-900/80 shadow-2xl md:grid-cols-[1.1fr_0.9fr]">
-        <div className="flex flex-col justify-between bg-gradient-to-br from-[#101B2B] via-[#0F1F39] to-[#122A45] p-8 md:p-12">
+        <div className="flex flex-col justify-between bg-gradient-to-br from-[#13251F] via-[#163F2F] to-[#091C16] p-8 md:p-12">
           <div>
             <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2675D8] font-bold text-white">AS</div>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#B91F26] font-bold text-white">AS</div>
               <div>
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-300">Secure operations</p>
                 <h1 className="text-2xl font-semibold">Access Surveillance</h1>
@@ -1141,7 +1389,7 @@ function LoginPage() {
           <form className="space-y-5" onSubmit={handleSubmit(onSubmit)} autoComplete="on">
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-200">Email address</label>
-              <input type="email" autoComplete="username" {...register('email')} className="w-full rounded-xl border border-slate-600 bg-slate-800 px-4 py-3 text-white outline-none focus:border-[#2675D8]" placeholder="you@company.com" />
+              <input type="email" autoComplete="username" {...register('email')} className="w-full rounded-xl border border-slate-600 bg-slate-800 px-4 py-3 text-white outline-none focus:border-[#2C8D58]" placeholder="you@company.com" />
               {errors.email && <p className="mt-2 text-sm text-red-400">{errors.email.message}</p>}
             </div>
 
@@ -1156,12 +1404,12 @@ function LoginPage() {
 
             <div className="flex items-center justify-between text-sm text-slate-300">
               <label className="flex items-center gap-2"><input type="checkbox" checked={rememberEmail} onChange={(event) => setRememberEmail(event.target.checked)} className="rounded border-slate-500 bg-slate-800" /> Remember email</label>
-              <button type="button" className="text-[#7fb5ff]">Forgot password?</button>
+              <button type="button" className="text-[#2C8D58]">Forgot password?</button>
             </div>
 
             {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
 
-            <button type="submit" disabled={pending} className="w-full rounded-xl bg-[#2675D8] px-4 py-3 font-medium text-white transition hover:bg-[#1f5ea8] disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="submit" disabled={pending} className="w-full rounded-xl bg-[#163F2F] px-4 py-3 font-medium text-white transition hover:bg-[#2C8D58] disabled:cursor-not-allowed disabled:opacity-60">
               {pending ? 'Signing in...' : 'Login'}
             </button>
 
@@ -1179,7 +1427,7 @@ function LoginPage() {
 function FeatureCard({ icon: Icon, title, text }: { icon: any; title: string; text: string }) {
   return (
     <div className="rounded-2xl border border-slate-700 bg-slate-800/50 p-4">
-      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-[#2675D8]/15 text-[#7fb5ff]">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-[#2C8D58]/20 text-[#EDF3EC]">
         <Icon size={18} />
       </div>
       <p className="font-medium text-white">{title}</p>
@@ -1231,7 +1479,7 @@ function DashboardPage() {
     { name: 'Awaiting parts', value: appState.jobs.filter((job) => job.status === 'Awaiting parts').length },
   ]
 
-  const pieColors = ['#2675D8', '#C6A15B', '#16A36A', '#D94A4A']
+  const pieColors = ['#163F2F', '#C6A15B', '#2C8D58', '#B91F26']
 
   return (
     <div className="space-y-6">
@@ -1256,15 +1504,15 @@ function DashboardPage() {
               <AreaChart data={revenueChart}>
                 <defs>
                   <linearGradient id="revenueFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="5%" stopColor="#2675D8" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#2675D8" stopOpacity={0.05} />
+                    <stop offset="5%" stopColor="#2C8D58" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#2C8D58" stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                 <XAxis dataKey="month" tickLine={false} axisLine={false} />
                 <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => `R${Math.round(value / 1000)}k`} />
                 <Tooltip formatter={(value) => [formatCurrency(Number(value ?? 0)), 'Revenue']} />
-                <Area type="monotone" dataKey="revenue" stroke="#2675D8" fill="url(#revenueFill)" strokeWidth={3} />
+                <Area type="monotone" dataKey="revenue" stroke="#2C8D58" fill="url(#revenueFill)" strokeWidth={3} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -1329,7 +1577,7 @@ function DashboardPage() {
                 <XAxis dataKey="name" tickLine={false} axisLine={false} />
                 <YAxis tickLine={false} axisLine={false} />
                 <Tooltip />
-                <Bar dataKey="jobs" fill="#16A36A" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="jobs" fill="#163F2F" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1352,6 +1600,10 @@ function DashboardPage() {
 
 function CustomersPage() {
   const { appState, dataLoading, updateState } = useAppContext()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const isCreateScreen = location.pathname === '/customers/new'
+  const selectedCustomerId = new URLSearchParams(location.search).get('customerId')
   const [form, setForm] = useState<{
     customerId: string
     fullName: string
@@ -1466,6 +1718,7 @@ function CustomersPage() {
         postalCode: '',
         notes: '',
       })
+      navigate('/customers')
     } catch (submitError) {
       setError(`Could not save customer: ${submitError instanceof Error ? submitError.message : 'Unexpected error.'}`)
     } finally {
@@ -1473,12 +1726,42 @@ function CustomersPage() {
     }
   }
 
+  const customerForm = (
+    <form className="space-y-4" onSubmit={handleSubmit}>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Full name"><input required value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} className="input" /></Field>
+        <Field label="Customer type"><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as CustomerType })} className="input"><option value="Residential">Residential</option><option value="Commercial">Commercial</option></select></Field>
+        <Field label="Contact person"><input value={form.contactPerson} onChange={(event) => setForm({ ...form, contactPerson: event.target.value })} className="input" /></Field>
+        <Field label="Phone"><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className="input" /></Field>
+        <Field label="Email"><input value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="input sm:col-span-2" /></Field>
+        <Field label="Address"><input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} className="input sm:col-span-2" /></Field>
+        <Field label="Suburb"><input value={form.suburb} onChange={(event) => setForm({ ...form, suburb: event.target.value })} className="input" /></Field>
+        <Field label="City"><input value={form.city} onChange={(event) => setForm({ ...form, city: event.target.value })} className="input" /></Field>
+        <Field label="Province"><input value={form.province} onChange={(event) => setForm({ ...form, province: event.target.value })} className="input" /></Field>
+        <Field label="Postal code"><input value={form.postalCode} onChange={(event) => setForm({ ...form, postalCode: event.target.value })} className="input" /></Field>
+      </div>
+      <Field label="Notes"><textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} className="input min-h-24" /></Field>
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+        <button type="button" onClick={() => navigate('/customers')} className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700">Cancel</button>
+        <button type="submit" disabled={isSaving} className="rounded-xl bg-[#163F2F] px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">{isSaving ? 'Saving...' : 'Save customer'}</button>
+      </div>
+    </form>
+  )
+
+  if (isCreateScreen) {
+    return (
+      <div className="space-y-6">
+        <SectionToolbar title="Add customer" buttonLabel="Back to customers" onAction={() => navigate('/customers')} />
+        {error && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700">{error}</div>}
+        <Panel title="Customer details" action="Profile">{customerForm}</Panel>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      <SectionToolbar title="Customer management" buttonLabel="Add customer" />
-      {error && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700">{error}</div>}
-      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <Panel title="Customer records" action={`${activeCustomers.length} active`}>
+      <SectionToolbar title="Customer management" buttonLabel="Add customer" onAction={() => navigate('/customers/new')} />
+      <Panel title="Customer records" action={`${activeCustomers.length} active`}>
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-slate-200 text-slate-500">
@@ -1493,11 +1776,28 @@ function CustomersPage() {
               <tbody>
                   {dataLoading && <tr><td colSpan={5} className="py-6 text-center text-slate-500">Loading customers...</td></tr>}
                   {!dataLoading && activeCustomers.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-500">No customers found.</td></tr>}
-                {activeCustomers.map((customer) => (
-                  <tr key={customer.id} className="border-b border-slate-200 last:border-b-0">
+                {activeCustomers.map((customer) => {
+                  const customerJobs = appState.jobs.filter((job) => job.customer === customer.fullName)
+                  const customerInvoices = appState.invoices.filter((invoice) =>
+                    invoice.customer === customer.fullName || customerJobs.some((job) => job.jobReference === invoice.jobReference),
+                  )
+                  const customerPayments = appState.payments.filter((payment) =>
+                    customerInvoices.some((invoice) => invoice.id === payment.invoiceId),
+                  )
+
+                  return (
+                  <Fragment key={customer.id}>
+                  <tr className="border-b border-slate-200 last:border-b-0">
                     <td className="py-3 pr-4">
                       <div>
-                        <p className="font-medium text-slate-900">{customer.fullName}</p>
+                        <button
+                          type="button"
+                          className="text-left font-medium text-slate-900 hover:text-[#B91F26]"
+                          aria-expanded={selectedCustomerId === customer.id}
+                          onClick={() => navigate(selectedCustomerId === customer.id ? '/customers' : `/customers?customerId=${encodeURIComponent(customer.id)}`)}
+                        >
+                          {customer.fullName}
+                        </button>
                         <p className="text-xs text-slate-500">{customer.customerId}</p>
                       </div>
                     </td>
@@ -1546,37 +1846,82 @@ function CustomersPage() {
                       />
                     </td>
                   </tr>
-                ))}
+                  {selectedCustomerId === customer.id && (
+                    <tr className="border-b border-slate-200 bg-slate-50">
+                      <td colSpan={5} className="p-4">
+                        <div className="grid gap-5 lg:grid-cols-2">
+                          <section>
+                            <h3 className="font-semibold text-slate-900">Jobs ({customerJobs.length})</h3>
+                            {customerJobs.length ? (
+                              <div className="mt-2 space-y-2">
+                                {customerJobs.map((job) => (
+                                  <button
+                                    key={job.id}
+                                    type="button"
+                                    onClick={() => navigate(`/jobs?jobId=${encodeURIComponent(job.id)}`)}
+                                    className="flex w-full items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-[#2C8D58]"
+                                  >
+                                    <span>
+                                      <span className="block font-medium text-slate-900">{job.jobReference}</span>
+                                      <span className="block text-xs text-slate-500">{job.category} · Created {job.createdDate || 'date not recorded'} · Scheduled {job.scheduledDate || 'not set'}</span>
+                                      <span className="mt-1 block text-sm text-slate-600">{job.description}</span>
+                                    </span>
+                                    <span className={getStatusClass(job.status)}>{job.status}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : <p className="mt-2 text-sm text-slate-500">No jobs recorded for this customer.</p>}
+                          </section>
+                          <section>
+                            <h3 className="font-semibold text-slate-900">Invoices & payments ({customerInvoices.length})</h3>
+                            {customerInvoices.length ? (
+                              <div className="mt-2 space-y-2">
+                                {customerInvoices.map((invoice) => {
+                                  const invoicePayments = customerPayments.filter((payment) => payment.invoiceId === invoice.id)
+                                  return (
+                                    <div key={invoice.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                                      <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div>
+                                          <p className="font-medium text-slate-900">{invoice.invoiceReference}</p>
+                                          <p className="text-xs text-slate-500">{invoice.jobReference || 'No linked job'} · Due {invoice.dueDate || 'not set'}</p>
+                                        </div>
+                                        <span className={getStatusClass(invoice.status)}>{invoice.status}</span>
+                                      </div>
+                                      <p className="mt-2 text-sm text-slate-700">Total {formatCurrency(invoice.total)} · Paid {formatCurrency(invoice.amountPaid)} · Outstanding {formatCurrency(invoice.outstandingBalance)}</p>
+                                      {invoicePayments.length > 0 && (
+                                        <div className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-500">
+                                          {invoicePayments.map((payment) => (
+                                            <p key={payment.id}>{payment.paymentDate}: {formatCurrency(payment.amount)}{payment.paymentMethod ? ` · ${payment.paymentMethod}` : ''}{payment.reference ? ` · ${payment.reference}` : ''}</p>
+                                          ))}
+                                        </div>
+                                      )}
+                                      {!invoicePayments.length && invoice.amountPaid > 0 && <p className="mt-1 text-xs text-slate-500">Payment recorded on invoice: {formatCurrency(invoice.amountPaid)}</p>}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            ) : <p className="mt-2 text-sm text-slate-500">No invoices or payments recorded for this customer.</p>}
+                          </section>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>
-        </Panel>
-
-        <Panel title="Add customer" action="Profile">
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Full name"><input required value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} className="input" /></Field>
-              <Field label="Customer type"><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as CustomerType })} className="input"><option value="Residential">Residential</option><option value="Commercial">Commercial</option></select></Field>
-              <Field label="Contact person"><input value={form.contactPerson} onChange={(event) => setForm({ ...form, contactPerson: event.target.value })} className="input" /></Field>
-              <Field label="Phone"><input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className="input" /></Field>
-              <Field label="Email"><input value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="input sm:col-span-2" /></Field>
-              <Field label="Address"><input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} className="input sm:col-span-2" /></Field>
-              <Field label="Suburb"><input value={form.suburb} onChange={(event) => setForm({ ...form, suburb: event.target.value })} className="input" /></Field>
-              <Field label="City"><input value={form.city} onChange={(event) => setForm({ ...form, city: event.target.value })} className="input" /></Field>
-              <Field label="Province"><input value={form.province} onChange={(event) => setForm({ ...form, province: event.target.value })} className="input" /></Field>
-              <Field label="Postal code"><input value={form.postalCode} onChange={(event) => setForm({ ...form, postalCode: event.target.value })} className="input" /></Field>
-            </div>
-            <Field label="Notes"><textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} className="input min-h-24" /></Field>
-            <button type="submit" disabled={isSaving} className="w-full rounded-xl bg-[#101B2B] px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">{isSaving ? 'Saving...' : 'Save customer'}</button>
-          </form>
-        </Panel>
-      </div>
+      </Panel>
     </div>
   )
 }
 
 function EquipmentPage() {
   const { appState, refreshData, updateState } = useAppContext()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const selectedEquipmentId = new URLSearchParams(location.search).get('equipmentId')
   const [creating, setCreating] = useState(false)
   const customerOptions = [{ value: '', label: 'No customer selected' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
   const technicianOptions = [{ value: '', label: 'Unassigned' }, ...appState.users.map((user) => ({ value: user.id, label: user.name }))]
@@ -1631,7 +1976,10 @@ function EquipmentPage() {
   return (
     <div className="space-y-6">
       <SectionToolbar title="Equipment register" buttonLabel="Add equipment" onAction={() => setCreating(true)} />
-      <Panel title="Installed assets" action={`${appState.equipment.length} items`}>
+      <Panel title="Installed assets" action={`${selectedEquipmentId ? appState.equipment.filter((item) => item.id === selectedEquipmentId).length : appState.equipment.length} items`}>
+        {selectedEquipmentId && (
+          <button type="button" className="mb-3 text-sm font-medium text-[#163F2F]" onClick={() => navigate('/equipment')}>Show all equipment</button>
+        )}
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-slate-200 text-slate-500">
@@ -1644,8 +1992,8 @@ function EquipmentPage() {
               </tr>
             </thead>
             <tbody>
-              {appState.equipment.map((item) => (
-                <tr key={item.id} className="border-b border-slate-200 last:border-b-0">
+              {appState.equipment.filter((item) => !selectedEquipmentId || item.id === selectedEquipmentId).map((item) => (
+                <tr key={item.id} className={`border-b border-slate-200 last:border-b-0 ${selectedEquipmentId === item.id ? 'bg-[#EDF3EC]' : ''}`}>
                   <td className="py-3 pr-4">
                     <p className="font-medium text-slate-900">{item.model}</p>
                     <p className="text-xs text-slate-500">{item.equipmentId}</p>
@@ -1747,11 +2095,375 @@ function EquipmentPage() {
   )
 }
 
+function JobExpenseEntrySheet({ job }: { job: Job }) {
+  const { appState, updateState } = useAppContext()
+  const [today] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const newItem = (): ExpenseEntryLine => ({
+    id: createReference('expense-line'),
+    category: 'Other equipment',
+    itemName: '',
+    quantity: '1',
+    unitPrice: '',
+  })
+  const [expenseDate, setExpenseDate] = useState(today)
+  const [items, setItems] = useState<ExpenseEntryLine[]>([newItem()])
+  const [isSaving, setIsSaving] = useState(false)
+  const [isSaved, setIsSaved] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [saveSuccess, setSaveSuccess] = useState('')
+  const [receiptFile, setReceiptFile] = useState<File | null>(null)
+  const [isScanning, setIsScanning] = useState(false)
+  const [scanError, setScanError] = useState('')
+
+  const jobExpenses = appState.expenses.filter((expense) => expense.jobId === job.id)
+  const preparedItems = items.map((item) => {
+    const quantity = Number(item.quantity)
+    const unitPrice = Number(item.unitPrice)
+    const amount = Math.round(quantity * unitPrice * 100) / 100
+    return { ...item, itemName: item.itemName.trim(), quantity, unitPrice, amount }
+  })
+  const isSheetValid = preparedItems.length > 0 && preparedItems.every((item) =>
+    item.itemName && Number.isFinite(item.quantity) && item.quantity > 0
+    && Number.isFinite(item.unitPrice) && item.unitPrice > 0 && Number.isFinite(item.amount) && item.amount > 0,
+  )
+  const sheetTotal = preparedItems.reduce((total, item) => total + (item.amount > 0 ? item.amount : 0), 0)
+
+  const updateItem = (id: string, updates: Partial<ExpenseEntryLine>) => {
+    setItems((current) => current.map((item) => item.id === id ? { ...item, ...updates } : item))
+  }
+
+  const saveExpenseSheet = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaveError('')
+    setSaveSuccess('')
+    if (!isSheetValid) {
+      setSaveError('Enter an item name, quantity, and unit price greater than zero for every line.')
+      return
+    }
+
+    setIsSaving(true)
+    try {
+      if (isSupabaseConfigured && supabase) {
+        const { data, error } = await supabase.from('job_expenses').insert(preparedItems.map((item) => ({
+          job_id: job.id,
+          expense_date: expenseDate || today,
+          category: item.category,
+          description: `${item.itemName} (${item.quantity} x ${formatCurrency(item.unitPrice)} each)`,
+          amount: item.amount,
+        }))).select('*')
+        if (error) throw new Error(error.message)
+        if (!data || data.length !== preparedItems.length) {
+          throw new Error('Expenses were saved, but the complete set of records was not returned.')
+        }
+        const expenses = data.map(mapJobExpenseRecord)
+        updateState((current) => ({ ...current, expenses: [...expenses, ...current.expenses] }))
+      } else {
+        const expenses: JobExpense[] = preparedItems.map((item) => ({
+          id: createReference('local-expense'),
+          jobId: job.id,
+          expenseDate: expenseDate || today,
+          category: item.category,
+          description: `${item.itemName} (${item.quantity} x ${formatCurrency(item.unitPrice)} each)`,
+          amount: item.amount,
+        }))
+        updateState((current) => ({ ...current, expenses: [...expenses, ...current.expenses] }))
+      }
+
+      setIsSaved(true)
+      setSaveSuccess(`${preparedItems.length} item${preparedItems.length === 1 ? '' : 's'} saved to ${job.jobReference}.`)
+    } catch (error) {
+      setSaveError(`Could not save job expenses: ${error instanceof Error ? error.message : 'Unexpected error.'}`)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const scanReceipt = async () => {
+    setScanError('')
+    if (!receiptFile) {
+      setScanError('Choose a supplier receipt image or PDF first.')
+      return
+    }
+    if (!isSupabaseConfigured || !supabase) {
+      setScanError('AI receipt scanning requires a configured Supabase project and deployed Edge Function.')
+      return
+    }
+    if (receiptFile.size > 10 * 1024 * 1024) {
+      setScanError('Choose a document smaller than 10 MB.')
+      return
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(receiptFile.type)) {
+      setScanError('Use a JPEG, PNG, WebP, or PDF document.')
+      return
+    }
+
+    setIsScanning(true)
+    try {
+      const { mimeType, imageBase64 } = await prepareFinancialDocument(receiptFile)
+      const { data, error } = await supabase.functions.invoke<{ extraction: FinancialDocumentExtraction }>('extract-financial-document', {
+        body: { documentType: 'supplier_receipt', mimeType, imageBase64 },
+      })
+      if (error) throw new Error(error.message)
+      const extraction = data?.extraction
+      if (!extraction || !Number.isFinite(extraction.total) || extraction.total <= 0) {
+        throw new Error('The scanner returned incomplete amounts. Try a clearer image or enter the values manually.')
+      }
+
+      const category = expenseCategories.find((item) =>
+        item.toLocaleLowerCase() === extraction.expenseCategory.toLocaleLowerCase(),
+      ) ?? 'Other'
+      setItems((current) => current.map((item, index) => index === 0 ? {
+        ...item,
+        category,
+        itemName: extraction.description || extraction.counterparty || 'Supplier receipt item',
+        quantity: '1',
+        unitPrice: String(extraction.total),
+      } : item))
+      if (/^\d{4}-\d{2}-\d{2}$/.test(extraction.documentDate)) setExpenseDate(extraction.documentDate)
+      setSaveSuccess('Receipt read. Review the item and price before saving.')
+      setReceiptFile(null)
+    } catch (error) {
+      setScanError(`Could not scan receipt: ${error instanceof Error ? error.message : 'Unexpected error.'}`)
+    } finally {
+      setIsScanning(false)
+    }
+  }
+
+  return (
+    <section className="dashboard-info-card space-y-4 rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-slate-900">Record job expenses</h3>
+          <p className="text-sm text-slate-500">Enter each equipment or wage item for {job.jobReference}.</p>
+        </div>
+        <button type="button" disabled={isSaved} onClick={() => setItems((current) => [...current, newItem()])} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">Add item</button>
+      </div>
+
+      {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{saveError}</p>}
+      {saveSuccess && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{saveSuccess}</p>}
+
+      <form className="space-y-4" onSubmit={saveExpenseSheet}>
+        <Field label="Expense date">
+          <input required type="date" value={expenseDate} disabled={isSaved} onChange={(event) => setExpenseDate(event.target.value)} className="input max-w-xs" />
+        </Field>
+        <div className="space-y-3">
+          {items.map((item, index) => {
+            const preparedItem = preparedItems[index]
+            return (
+              <div key={item.id} className="dashboard-info-card rounded-xl border border-slate-200 p-3">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-800">Item {index + 1}</p>
+                  <button type="button" disabled={isSaved || items.length === 1} onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))} className="text-sm text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40">Remove</button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Item name">
+                    <input required disabled={isSaved} value={item.itemName} onChange={(event) => updateItem(item.id, { itemName: event.target.value })} className="input" placeholder="For example, CCTV camera" />
+                  </Field>
+                  <Field label="Category">
+                    <select disabled={isSaved} value={item.category} onChange={(event) => updateItem(item.id, { category: event.target.value as ExpenseCategory })} className="input">
+                      {expenseCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Quantity">
+                    <input required disabled={isSaved} type="number" min="0.01" step="0.01" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: event.target.value })} className="input" />
+                  </Field>
+                  <Field label="Price per item (ZAR)">
+                    <input required disabled={isSaved} type="number" min="0.01" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(item.id, { unitPrice: event.target.value })} className="input" />
+                  </Field>
+                </div>
+                <p className="mt-3 text-right text-sm text-slate-600">Line total: <span className="font-semibold text-slate-900">{formatCurrency(preparedItem.amount > 0 ? preparedItem.amount : 0)}</span></p>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+          <p className="text-lg font-semibold text-slate-900">Sheet total: {formatCurrency(sheetTotal)}</p>
+          <div className="flex flex-wrap gap-2">
+            {isSaved
+              ? <button type="button" onClick={() => {
+                setItems([newItem()])
+                setExpenseDate(today)
+                setIsSaved(false)
+                setSaveSuccess('')
+                setSaveError('')
+              }} className="rounded-xl bg-[#163F2F] px-4 py-2.5 text-sm font-medium text-white">New expense sheet</button>
+              : <button type="submit" disabled={isSaving || !isSheetValid} className="rounded-xl bg-[#163F2F] px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">{isSaving ? 'Saving...' : 'Save expense sheet'}</button>}
+          </div>
+        </div>
+      </form>
+
+      <details className="rounded-lg border border-slate-200 p-3">
+        <summary className="cursor-pointer text-sm font-medium text-slate-700">Scan supplier receipt with Gemini</summary>
+        <div className="mt-3 space-y-3">
+          <input type="file" disabled={isSaved} accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => {
+            setReceiptFile(event.target.files?.[0] ?? null)
+            setScanError('')
+          }} className="input" />
+          {scanError && <p role="alert" className="text-sm text-red-700">{scanError}</p>}
+          <button type="button" disabled={isSaved || isScanning} onClick={scanReceipt} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60">{isScanning ? 'Reading receipt...' : 'Analyze receipt'}</button>
+        </div>
+      </details>
+
+      <div className="border-t border-slate-200 pt-4">
+        <h4 className="text-sm font-semibold text-slate-800">Saved expense items ({jobExpenses.length})</h4>
+        {jobExpenses.length ? (
+          <div className="mt-2 space-y-2">
+            {jobExpenses.map((expense) => (
+              <div key={expense.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <span className="text-slate-700">{expense.description || expense.category} · {expense.category} · {expense.expenseDate}</span>
+                <span className="font-medium text-slate-900">{formatCurrency(expense.amount)}</span>
+              </div>
+            ))}
+          </div>
+        ) : <p className="mt-2 text-sm text-slate-500">No expense items have been saved for this job yet.</p>}
+      </div>
+    </section>
+  )
+}
+
+function JobExpenseSheet({ job }: { job: Job }) {
+  const { appState } = useAppContext()
+  const expenses = appState.expenses
+    .filter((expense) => expense.jobId === job.id)
+    .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate))
+  const total = expenses.reduce((sum, expense) => sum + expense.amount, 0)
+
+  const downloadPdf = () => {
+    if (!expenses.length) return
+
+    const company = appState.companySettings
+    const doc = new jsPDF()
+    doc.setFillColor(16, 27, 43)
+    doc.rect(0, 0, 210, 30, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFontSize(15)
+    doc.text(company.companyName || 'Access Surveillance', 14, 14)
+    doc.setFontSize(9)
+    const companyContact = [company.phone, company.email, company.businessAddress].filter(Boolean).join(' | ')
+    if (companyContact) doc.text(doc.splitTextToSize(companyContact, 180), 14, 22)
+
+    doc.setTextColor(16, 27, 43)
+    doc.setFontSize(19)
+    doc.text('Job expense summary', 14, 43)
+    doc.setFontSize(10)
+    doc.text(`Customer: ${job.customer || 'Not specified'}`, 14, 53)
+    doc.text(`Job reference: ${job.jobReference}`, 14, 60)
+    doc.text(`Site: ${job.siteAddress || 'Not specified'}`, 14, 67)
+    doc.text(`Prepared: ${format(new Date(), 'dd MMM yyyy')}`, 14, 74)
+
+    const drawTableHeader = (y: number) => {
+      doc.setFillColor(241, 245, 249)
+      doc.rect(14, y - 5, 182, 9, 'F')
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Item / description', 17, y)
+      doc.text('Category', 119, y)
+      doc.text('Date', 157, y)
+      doc.text('Amount', 193, y, { align: 'right' })
+      doc.setFont('helvetica', 'normal')
+    }
+
+    let y = 87
+    drawTableHeader(y)
+    y += 11
+    for (const expense of expenses) {
+      const description = doc.splitTextToSize(expense.description || expense.category, 96)
+      const rowHeight = Math.max(9, description.length * 5)
+      if (y + rowHeight > 275) {
+        doc.addPage()
+        y = 20
+        drawTableHeader(y)
+        y += 11
+      }
+
+      doc.setFontSize(9)
+      doc.text(description, 17, y)
+      doc.text(doc.splitTextToSize(expense.category, 32), 119, y)
+      doc.text(expense.expenseDate, 157, y)
+      doc.text(formatCurrency(expense.amount), 193, y, { align: 'right' })
+      y += rowHeight
+      doc.setDrawColor(226, 232, 240)
+      doc.line(14, y - 2, 196, y - 2)
+      y += 5
+    }
+
+    if (y + 22 > 280) {
+      doc.addPage()
+      y = 24
+    }
+    doc.setDrawColor(16, 27, 43)
+    doc.line(120, y, 196, y)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(12)
+    doc.text('Total job expenses', 120, y + 8)
+    doc.text(formatCurrency(total), 193, y + 8, { align: 'right' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(100, 116, 139)
+    doc.text('Expense summary only; this document is not a tax invoice.', 14, 286)
+
+    const safeReference = job.jobReference.replace(/[^a-zA-Z0-9-]/g, '-')
+    doc.save(`${safeReference}-expense-summary.pdf`)
+  }
+
+  return (
+    <section className="dashboard-info-card space-y-4 rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-slate-900">Job expense summary</h3>
+          <p className="text-sm text-slate-500">{job.jobReference} · {job.customer}</p>
+        </div>
+        <button type="button" disabled={!expenses.length} onClick={downloadPdf} className="rounded-xl bg-[#163F2F] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">Download client PDF</button>
+      </div>
+      {expenses.length ? (
+        <>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-slate-200 text-slate-500">
+                <tr>
+                  <th className="py-2 pr-4 font-medium">Item / description</th>
+                  <th className="py-2 pr-4 font-medium">Category</th>
+                  <th className="py-2 pr-4 font-medium">Date</th>
+                  <th className="py-2 text-right font-medium">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expenses.map((expense) => (
+                  <tr key={expense.id} className="border-b border-slate-100 last:border-0">
+                    <td className="py-3 pr-4">{expense.description || expense.category}</td>
+                    <td className="py-3 pr-4">{expense.category}</td>
+                    <td className="py-3 pr-4">{expense.expenseDate}</td>
+                    <td className="py-3 text-right font-medium">{formatCurrency(expense.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t border-slate-200">
+                <tr>
+                  <th colSpan={3} className="py-3 pr-4 text-right font-semibold text-slate-900">Total job expenses</th>
+                  <th className="py-3 text-right font-semibold text-slate-900">{formatCurrency(total)}</th>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <p className="text-xs text-slate-500">This expense summary is provided for review and is not a tax invoice.</p>
+        </>
+      ) : <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-500">No expense items have been recorded for this job.</p>}
+    </section>
+  )
+}
+
 function JobsPage() {
-  const { appState, refreshData, updateState } = useAppContext()
+  const { appState, session, refreshData, updateState } = useAppContext()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const searchParams = new URLSearchParams(location.search)
+  const dateFilter = searchParams.get('date') ?? ''
+  const expandedJobId = searchParams.get('jobId')
   const [creating, setCreating] = useState(false)
   const customerOptions = [{ value: '', label: 'Select customer' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
   const technicianOptions = [{ value: '', label: 'Unassigned' }, ...appState.users.map((user) => ({ value: user.id, label: user.name }))]
+  const jobsToShow = dateFilter ? appState.jobs.filter((job) => job.createdDate === dateFilter) : appState.jobs
 
   const saveJob = async (values: Record<string, string>) => {
     const jobReference = createReference('AS-J')
@@ -1789,6 +2501,7 @@ function JobsPage() {
       siteAddress: values.siteAddress,
       priority: (values.priority || 'Medium') as Job['priority'],
       assignedTechnician: technician?.name ?? '',
+      createdDate: format(new Date(), 'yyyy-MM-dd'),
       scheduledDate: values.scheduledDate,
       scheduledTime: values.scheduledTime,
       status: (values.status || 'New') as JobStatus,
@@ -1803,24 +2516,102 @@ function JobsPage() {
   return (
     <div className="space-y-6">
       <SectionToolbar title="Job management" buttonLabel="Create job" onAction={() => setCreating(true)} />
-      <Panel title="Live jobs" action={`${appState.jobs.length} records`}>
+      <p className="text-sm text-slate-500">Select a job reference to view its details and read-only expense summary.</p>
+      <Panel title="Live jobs" action={`${jobsToShow.length} records`}>
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <label htmlFor="job-date-filter" className="mb-1 block text-xs font-medium text-slate-600">Find jobs recorded on a date</label>
+            <input
+              id="job-date-filter"
+              type="date"
+              value={dateFilter}
+              onChange={(event) => navigate(event.target.value ? `/jobs?date=${encodeURIComponent(event.target.value)}` : '/jobs')}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+            />
+          </div>
+          {dateFilter && <button type="button" className="text-sm font-medium text-[#163F2F]" onClick={() => navigate('/jobs')}>Show all jobs</button>}
+        </div>
+        {dateFilter && <p className="mb-4 text-sm text-slate-600">Showing jobs recorded on {dateFilter}.</p>}
         <div className="grid gap-4 lg:grid-cols-2">
-          {appState.jobs.map((job) => (
-            <div key={job.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
+          {jobsToShow.map((job) => {
+            const customer = appState.customers.find((item) => item.fullName === job.customer)
+            const jobEquipment = appState.equipment.filter((item) =>
+              item.customerId === customer?.id || item.customerId === customer?.customerId,
+            )
+            const isExpanded = expandedJobId === job.id
+
+            return (
+            <div key={job.id} className="dashboard-info-card job-summary-card rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="job-card-heading">
                 <div>
-                  <p className="font-semibold text-slate-900">{job.jobReference}</p>
-                  <p className="text-sm text-slate-600">{job.customer}</p>
+                  <button
+                    type="button"
+                    aria-expanded={isExpanded}
+                    className="job-reference font-semibold text-slate-900 hover:text-[#B91F26]"
+                    onClick={() => {
+                      if (dateFilter) {
+                        navigate(isExpanded ? `/jobs?date=${encodeURIComponent(dateFilter)}` : `/jobs?date=${encodeURIComponent(dateFilter)}&jobId=${encodeURIComponent(job.id)}`, { replace: true })
+                      } else if (!isExpanded) {
+                        navigate(`/jobs?jobId=${encodeURIComponent(job.id)}`, { replace: true })
+                      } else {
+                        navigate('/jobs', { replace: true })
+                      }
+                    }}
+                  >
+                    {job.jobReference}
+                  </button>
+                  <p className="job-customer text-sm text-slate-600">{job.customer}</p>
                 </div>
                 <span className={getStatusClass(job.status)}>{job.status}</span>
               </div>
-              <p className="text-sm text-slate-600">{job.description}</p>
-              <div className="mt-4 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
-                <p>Category: {job.category}</p>
-                <p>Priority: {job.priority}</p>
-                <p>Assigned: {job.assignedTechnician}</p>
-                <p>Date: {job.scheduledDate}</p>
+              <div className="job-description">{job.description || 'No job description provided.'}</div>
+              <div className="job-meta-grid">
+                <div className="job-meta-item"><span>Category</span><strong>{job.category}</strong></div>
+                <div className="job-meta-item"><span>Priority</span><strong>{job.priority}</strong></div>
+                <div className="job-meta-item"><span>Assigned technician</span><strong>{job.assignedTechnician || 'Unassigned'}</strong></div>
+                <div className="job-meta-item"><span>Created</span><strong>{job.createdDate || 'Not recorded'}</strong></div>
+                <div className="job-meta-item"><span>Scheduled</span><strong>{job.scheduledDate || 'Not set'}</strong></div>
               </div>
+              {isExpanded && (
+                <div className="job-details-panel">
+                  <section className="job-detail-section">
+                    <h3 className="job-section-title">Job information</h3>
+                    <div className="job-info-grid">
+                      <div className="job-info-item"><span>Scheduled</span><strong>{job.scheduledDate || 'Not set'} {job.scheduledTime}</strong></div>
+                      <div className="job-info-item"><span>Recorded</span><strong>{job.createdDate || 'Date not recorded'}</strong></div>
+                      <div className="job-info-item"><span>Completion</span><strong>{job.completionDate || 'Not completed'}</strong></div>
+                      <div className="job-info-item"><span>Site</span><strong>{job.siteAddress || customer?.address || 'Not set'}</strong></div>
+                      <div className="job-info-item"><span>Technician</span><strong>{job.assignedTechnician || 'Unassigned'}</strong></div>
+                      <div className="job-info-item"><span>Equipment listed on job</span><strong>{job.equipment || 'None specified'}</strong></div>
+                      <div className="job-info-item job-info-item-wide"><span>Customer instructions</span><strong>{job.customerInstructions || 'None'}</strong></div>
+                      <div className="job-info-item job-info-item-wide"><span>Internal notes</span><strong>{job.internalNotes || 'None'}</strong></div>
+                    </div>
+                  </section>
+                  <section className="job-detail-section">
+                    <h3 className="job-section-title">Customer equipment ({jobEquipment.length})</h3>
+                    {jobEquipment.length ? (
+                      <div className="job-equipment-list">
+                        {jobEquipment.map((item) => (
+                          <div key={item.id} className="job-equipment-card text-sm">
+                            <p className="font-semibold text-slate-900">{item.manufacturer} {item.model} · {item.category}</p>
+                            <p className="job-equipment-meta">
+                              Ref {item.equipmentId} · Serial {item.serialNumber || 'not set'} · Qty {item.quantity}
+                            </p>
+                            <p className="job-equipment-meta">
+                              Installed {item.installationDate || 'not set'} · Warranty {item.warrantyExpiry || 'not set'} · {item.condition} · {item.status}
+                            </p>
+                            <p className="job-equipment-meta">
+                              {item.installationAddress || 'Address not set'}{item.technician ? ` · ${item.technician}` : ''}
+                            </p>
+                            {item.notes && <p className="job-equipment-meta">{item.notes}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="mt-2 text-sm text-slate-500">No equipment records are linked to this customer.</p>}
+                  </section>
+                </div>
+              )}
+              {isExpanded && session && ['ADMIN', 'OFFICE_ADMIN'].includes(session.role) && <JobExpenseSheet key={job.id} job={job} />}
               <div className="mt-4 border-t border-slate-200 pt-3">
                 <RecordActions
                   tableName="jobs"
@@ -1884,7 +2675,9 @@ function JobsPage() {
                 />
               </div>
             </div>
-          ))}
+            )
+          })}
+          {jobsToShow.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 lg:col-span-2">No jobs scheduled for this date.</p>}
         </div>
       </Panel>
       {creating && (
@@ -2053,7 +2846,7 @@ function QuotationsPage() {
                 }}
                 onLocalDelete={() => updateState((current) => ({ ...current, quotations: current.quotations.filter((entry) => entry.id !== quotation.id) }))}
               />
-              <button type="button" className="w-full rounded-xl bg-[#101B2B] px-4 py-2 text-sm font-medium text-white" onClick={() => createPdf(quotation)}>Download PDF</button>
+              <button type="button" className="w-full rounded-xl bg-[#163F2F] px-4 py-2 text-sm font-medium text-white" onClick={() => createPdf(quotation)}>Download PDF</button>
             </div>
           </Panel>
         ))}
@@ -2126,7 +2919,7 @@ function MaintenancePage() {
       <Panel title="Maintenance schedule" action={`${appState.maintenance.length} agreements`}>
         <div className="space-y-3">
           {appState.maintenance.map((agreement) => (
-            <div key={agreement.id} className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-between">
+            <div key={agreement.id} className="dashboard-info-card flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="font-medium text-slate-900">{agreement.agreementReference}</p>
                 <p className="text-sm text-slate-600">{agreement.customer} · {agreement.serviceFrequency}</p>
@@ -2294,6 +3087,15 @@ function InvoicesPage() {
 
     updateState((current) => ({
       ...current,
+      payments: [...current.payments, {
+        id: createReference('local-payment'),
+        invoiceId: invoice.id,
+        paymentDate: new Date().toISOString().slice(0, 10),
+        amount,
+        paymentMethod: values.paymentMethod,
+        reference: values.reference || '',
+        notes: values.notes || '',
+      }],
       invoices: current.invoices.map((item) => item.id === invoice.id
         ? { ...item, amountPaid, outstandingBalance, status }
         : item),
@@ -2460,7 +3262,7 @@ function StaffPage() {
       <Panel title="Team" action={`${appState.staff.length} members`}>
         <div className="grid gap-4 md:grid-cols-2">
           {appState.staff.map((member) => (
-            <div key={member.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div key={member.id} className="dashboard-info-card rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="font-semibold text-slate-900">{member.fullName}</p>
@@ -2533,6 +3335,446 @@ function StaffPage() {
   )
 }
 
+function ProfitExpensesPage() {
+  const { appState, refreshData, updateState } = useAppContext()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const isExpenseScreen = location.pathname === '/profit/expenses'
+  const isInvoiceScreen = location.pathname === '/profit/invoices'
+  const documentType = 'customer_invoice'
+  const [today] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [selectedMonth, setSelectedMonth] = useState(() => format(new Date(), 'yyyy-MM'))
+  const [expenseJobId, setExpenseJobId] = useState('')
+  const [documentFile, setDocumentFile] = useState<File | null>(null)
+  const [extraction, setExtraction] = useState<FinancialDocumentExtraction | null>(null)
+  const [invoiceForm, setInvoiceForm] = useState(() => ({
+    invoiceReference: '',
+    customerId: '',
+    jobId: '',
+    invoiceDate: today,
+    dueDate: '',
+    subtotal: '',
+    vat: '',
+    total: '',
+  }))
+  const [isExtracting, setIsExtracting] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [scanError, setScanError] = useState('')
+  const [saveError, setSaveError] = useState('')
+  const [saveSuccess, setSaveSuccess] = useState('')
+  const [advisorQuestion, setAdvisorQuestion] = useState('')
+  const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([])
+  const [advisorError, setAdvisorError] = useState('')
+  const [isAskingAdvisor, setIsAskingAdvisor] = useState(false)
+
+  const monthInvoices = appState.invoices.filter((invoice) =>
+    invoice.invoiceDate.startsWith(selectedMonth) && !['Cancelled', 'Draft'].includes(invoice.status),
+  )
+  const monthPayments = appState.payments.filter((payment) => {
+    const invoice = appState.invoices.find((item) => item.id === payment.invoiceId)
+    return payment.paymentDate.startsWith(selectedMonth) && invoice?.status !== 'Cancelled'
+  })
+  const monthExpenses = appState.expenses.filter((expense) => expense.expenseDate.startsWith(selectedMonth))
+  const monthlyBilledRevenue = monthInvoices.reduce((total, invoice) => total + invoice.subtotal, 0)
+  const monthlyCashReceived = monthPayments.reduce((total, payment) => total + payment.amount, 0)
+  const monthlyExpenses = monthExpenses.reduce((total, expense) => total + expense.amount, 0)
+  const customerOptions = [{ value: '', label: 'Select customer' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
+  const jobOptions = [{ value: '', label: 'Select job' }, ...appState.jobs.map((job) => ({ value: job.id, label: `${job.jobReference} — ${job.customer}` }))]
+  const selectedExpenseJob = appState.jobs.find((job) => job.id === expenseJobId)
+
+  const analyzeDocument = async () => {
+    setScanError('')
+    setSaveSuccess('')
+    if (!documentFile) {
+      setScanError('Choose an invoice or receipt image first.')
+      return
+    }
+    if (!isSupabaseConfigured || !supabase) {
+      setScanError('AI document scanning requires a configured Supabase project and deployed Edge Function.')
+      return
+    }
+    if (documentFile.size > 10 * 1024 * 1024) {
+      setScanError('Choose a document smaller than 10 MB.')
+      return
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(documentFile.type)) {
+      setScanError('Use a JPEG, PNG, WebP, or PDF document.')
+      return
+    }
+
+    setIsExtracting(true)
+    try {
+      const { mimeType, imageBase64 } = await prepareFinancialDocument(documentFile)
+      const { data, error } = await supabase.functions.invoke<{ extraction: FinancialDocumentExtraction }>('extract-financial-document', {
+        body: { documentType, mimeType, imageBase64 },
+      })
+      if (error) throw new Error(error.message)
+      const extracted = data?.extraction
+      if (!extracted || !Number.isFinite(extracted.total) || extracted.total < 0) {
+        throw new Error('The scanner returned incomplete amounts. Try a clearer image or enter the values manually.')
+      }
+
+      setExtraction(extracted)
+      const customer = appState.customers.find((item) => item.fullName.toLocaleLowerCase() === extracted.counterparty.toLocaleLowerCase())
+      const initialSubtotal = extracted.subtotal > 0
+        ? extracted.subtotal
+        : Math.max(0, extracted.total - extracted.vat)
+      setInvoiceForm({
+        invoiceReference: extracted.invoiceReference,
+        customerId: customer?.id ?? '',
+        jobId: '',
+        invoiceDate: /^\d{4}-\d{2}-\d{2}$/.test(extracted.documentDate) ? extracted.documentDate : today,
+        dueDate: /^\d{4}-\d{2}-\d{2}$/.test(extracted.dueDate) ? extracted.dueDate : '',
+        subtotal: String(initialSubtotal),
+        vat: String(extracted.vat),
+        total: String(extracted.total),
+      })
+    } catch (error) {
+      setScanError(`Could not scan document: ${error instanceof Error ? error.message : 'Unexpected error.'}`)
+    } finally {
+      setIsExtracting(false)
+    }
+  }
+
+  const saveImportedInvoice = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaveError('')
+    setSaveSuccess('')
+    const subtotal = Number(invoiceForm.subtotal)
+    const vat = Number(invoiceForm.vat)
+    const total = Number(invoiceForm.total)
+    if (!invoiceForm.customerId || !invoiceForm.jobId) {
+      setSaveError('Choose both a customer and a job for this invoice.')
+      return
+    }
+    if (![subtotal, vat, total].every(Number.isFinite) || subtotal < 0 || vat < 0 || total <= 0) {
+      setSaveError('Check that the invoice has valid subtotal, VAT, and total amounts.')
+      return
+    }
+    if (Math.abs(subtotal + vat - total) > 0.01) {
+      setSaveError('The subtotal plus VAT must match the invoice total.')
+      return
+    }
+
+    setIsSaving(true)
+    try {
+      const invoiceReference = invoiceForm.invoiceReference.trim() || createReference('AS-INV')
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase.from('invoices').insert({
+          invoice_reference: invoiceReference,
+          customer_id: invoiceForm.customerId,
+          job_id: invoiceForm.jobId,
+          invoice_date: invoiceForm.invoiceDate || today,
+          due_date: invoiceForm.dueDate || null,
+          subtotal,
+          vat,
+          total,
+          amount_paid: 0,
+          outstanding_balance: total,
+          payment_status: 'Sent',
+        })
+        if (error) throw new Error(error.message)
+        if (!await refreshData()) throw new Error('Invoice was imported, but the latest records could not be reloaded.')
+      } else {
+        const customer = appState.customers.find((item) => item.id === invoiceForm.customerId)
+        const job = appState.jobs.find((item) => item.id === invoiceForm.jobId)
+        const invoice: Invoice = {
+          id: createReference('local-invoice'),
+          invoiceReference,
+          customer: customer?.fullName ?? '',
+          jobReference: job?.jobReference ?? '',
+          relatedQuotation: '',
+          invoiceDate: invoiceForm.invoiceDate || today,
+          dueDate: invoiceForm.dueDate,
+          subtotal,
+          vat,
+          total,
+          amountPaid: 0,
+          outstandingBalance: total,
+          status: 'Sent',
+        }
+        updateState((current) => ({ ...current, invoices: [invoice, ...current.invoices] }))
+      }
+
+      setInvoiceForm({ invoiceReference: '', customerId: '', jobId: '', invoiceDate: today, dueDate: '', subtotal: '', vat: '', total: '' })
+      setExtraction(null)
+      setDocumentFile(null)
+      setSaveSuccess('Customer invoice saved and included in billed profit.')
+    } catch (error) {
+      setSaveError(`Could not save customer invoice: ${error instanceof Error ? error.message : 'Unexpected error.'}`)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const deleteExpense = async (expense: JobExpense) => {
+    if (!window.confirm(`Delete the ${formatCurrency(expense.amount)} ${expense.category} expense?`)) return
+    setSaveError('')
+    setSaveSuccess('')
+    try {
+      if (isSupabaseConfigured && supabase) {
+        const { data, error } = await supabase.from('job_expenses').delete().eq('id', expense.id).select('id').maybeSingle()
+        if (error) throw new Error(error.message)
+        if (!data) throw new Error('Expense was not found or could not be deleted.')
+      }
+      updateState((current) => ({ ...current, expenses: current.expenses.filter((item) => item.id !== expense.id) }))
+    } catch (error) {
+      setSaveError(`Could not delete expense: ${error instanceof Error ? error.message : 'Unexpected error.'}`)
+    }
+  }
+
+  const jobProfitRows = appState.jobs.map((job) => {
+    const invoices = monthInvoices.filter((invoice) => invoice.jobReference === job.jobReference)
+    const invoiceIds = new Set(invoices.map((invoice) => invoice.id))
+    const billedRevenue = invoices.reduce((sum, invoice) => sum + invoice.subtotal, 0)
+    const cashReceived = monthPayments.filter((payment) => invoiceIds.has(payment.invoiceId)).reduce((sum, payment) => sum + payment.amount, 0)
+    const expenses = monthExpenses.filter((expense) => expense.jobId === job.id).reduce((sum, expense) => sum + expense.amount, 0)
+    return { job, billedRevenue, cashReceived, expenses, billedProfit: billedRevenue - expenses, cashProfit: cashReceived - expenses }
+  }).filter((row) => row.billedRevenue > 0 || row.cashReceived > 0 || row.expenses > 0)
+
+  const expenseBreakdown = expenseCategories.map((category) => ({
+    category,
+    amount: monthExpenses.filter((expense) => expense.category === category).reduce((sum, expense) => sum + expense.amount, 0),
+  })).filter((item) => item.amount > 0)
+
+  const askBusinessAdvisor = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const question = advisorQuestion.trim()
+    setAdvisorError('')
+    if (!question) return
+    if (!isSupabaseConfigured || !supabase) {
+      setAdvisorError('AI business advice requires a configured Supabase project and deployed Edge Function.')
+      return
+    }
+
+    setIsAskingAdvisor(true)
+    try {
+      const { data, error } = await supabase.functions.invoke<{ answer: string }>('extract-financial-document', {
+        body: {
+          action: 'business_advice',
+          question,
+          history: advisorMessages.slice(-6),
+          metrics: {
+            month: selectedMonth,
+            invoicedRevenueExVat: monthlyBilledRevenue,
+            cashReceived: monthlyCashReceived,
+            jobExpenses: monthlyExpenses,
+            invoicedNetProfit: monthlyBilledRevenue - monthlyExpenses,
+            cashNetProfit: monthlyCashReceived - monthlyExpenses,
+            expenseBreakdown,
+            jobs: jobProfitRows.slice(0, 20).map((row) => ({
+              jobReference: row.job.jobReference,
+              invoicedRevenueExVat: row.billedRevenue,
+              cashReceived: row.cashReceived,
+              expenses: row.expenses,
+              invoicedNetProfit: row.billedProfit,
+              cashNetProfit: row.cashProfit,
+            })),
+          },
+        },
+      })
+      if (error) throw new Error(error.message)
+      const answer = data?.answer?.trim()
+      if (!answer) throw new Error('The AI advisor returned no answer. Try asking again.')
+
+      setAdvisorMessages((current) => [...current, { role: 'user', content: question }, { role: 'assistant', content: answer }])
+      setAdvisorQuestion('')
+    } catch (error) {
+      setAdvisorError(`Could not get business advice: ${error instanceof Error ? error.message : 'Unexpected error.'}`)
+    } finally {
+      setIsAskingAdvisor(false)
+    }
+  }
+
+  const documentScanPanel = (
+    <Panel title="Scan customer invoice" action="Gemini AI">
+      <div className="space-y-4">
+        <Field label="Customer invoice image/PDF">
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,application/pdf"
+            onChange={(event) => {
+              setDocumentFile(event.target.files?.[0] ?? null)
+              setExtraction(null)
+              setScanError('')
+            }}
+            className="input"
+          />
+        </Field>
+        <p className="text-xs text-slate-500">Images are reduced to a readable size before being sent to Google Gemini; PDFs are sent as selected. The document is not stored by the app. Review all extracted amounts before saving. Scanning may take up to 25 seconds.</p>
+        {scanError && <p role="alert" className="text-sm text-red-700">{scanError}</p>}
+        {extraction && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">Read {extraction.counterparty || 'document'} · Total {formatCurrency(extraction.total)}. Confirm or edit the fields before saving.</p>}
+        <button type="button" disabled={isExtracting} onClick={analyzeDocument} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-60">{isExtracting ? 'Reading document...' : 'Analyze with Gemini'}</button>
+      </div>
+    </Panel>
+  )
+
+  const invoiceReviewPanel = extraction && isInvoiceScreen ? (
+    <Panel title="Review imported customer invoice" action="Confirm before save">
+      <form className="space-y-4" onSubmit={saveImportedInvoice}>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="Invoice reference"><input value={invoiceForm.invoiceReference} onChange={(event) => setInvoiceForm({ ...invoiceForm, invoiceReference: event.target.value })} className="input" /></Field>
+          <Field label="Customer"><select required value={invoiceForm.customerId} onChange={(event) => setInvoiceForm({ ...invoiceForm, customerId: event.target.value })} className="input">{customerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+          <Field label="Job"><select required value={invoiceForm.jobId} onChange={(event) => {
+            const job = appState.jobs.find((item) => item.id === event.target.value)
+            const customer = appState.customers.find((item) => item.fullName === job?.customer)
+            setInvoiceForm({ ...invoiceForm, jobId: event.target.value, customerId: customer?.id ?? invoiceForm.customerId })
+          }} className="input">{jobOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+          <Field label="Invoice date"><input required type="date" value={invoiceForm.invoiceDate} onChange={(event) => setInvoiceForm({ ...invoiceForm, invoiceDate: event.target.value })} className="input" /></Field>
+          <Field label="Due date"><input type="date" value={invoiceForm.dueDate} onChange={(event) => setInvoiceForm({ ...invoiceForm, dueDate: event.target.value })} className="input" /></Field>
+          <Field label="Subtotal (ZAR)"><input required type="number" min="0" step="0.01" value={invoiceForm.subtotal} onChange={(event) => setInvoiceForm({ ...invoiceForm, subtotal: event.target.value })} className="input" /></Field>
+          <Field label="VAT (ZAR)"><input required type="number" min="0" step="0.01" value={invoiceForm.vat} onChange={(event) => setInvoiceForm({ ...invoiceForm, vat: event.target.value })} className="input" /></Field>
+          <Field label="Total (ZAR)"><input required type="number" min="0.01" step="0.01" value={invoiceForm.total} onChange={(event) => setInvoiceForm({ ...invoiceForm, total: event.target.value })} className="input" /></Field>
+        </div>
+        <button type="submit" disabled={isSaving} className="rounded-xl bg-[#163F2F] px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60">{isSaving ? 'Saving...' : 'Confirm and save invoice'}</button>
+      </form>
+    </Panel>
+  ) : null
+
+  const statusMessages = (
+    <>
+      {saveError && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700">{saveError}</div>}
+      {saveSuccess && <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">{saveSuccess}</div>}
+    </>
+  )
+
+  if (isExpenseScreen) {
+    return (
+      <div className="space-y-6">
+        <SectionToolbar title="Add job expenses" buttonLabel="Back to profit" onAction={() => navigate('/profit')} />
+        <Panel title="Choose a job" action="Job-specific cost sheet">
+          <Field label="Job">
+            <select value={expenseJobId} onChange={(event) => setExpenseJobId(event.target.value)} className="input max-w-2xl">
+              {jobOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </Field>
+          {!selectedExpenseJob && <p className="mt-3 text-sm text-slate-500">Choose a job to enter its itemized expenses.</p>}
+        </Panel>
+        {selectedExpenseJob && <JobExpenseEntrySheet key={selectedExpenseJob.id} job={selectedExpenseJob} />}
+      </div>
+    )
+  }
+
+  if (isInvoiceScreen) {
+    return (
+      <div className="space-y-6">
+        <SectionToolbar title="Import customer invoice" buttonLabel="Back to profit" onAction={() => navigate('/profit')} />
+        {statusMessages}
+        {documentScanPanel}
+        {invoiceReviewPanel}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm text-slate-500">Operations</p>
+          <h1 className="text-2xl font-semibold text-slate-900">Profit & expenses</h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => navigate('/profit/invoices')} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Import customer invoice</button>
+          <button type="button" onClick={() => navigate('/profit/expenses')} className="rounded-xl bg-[#163F2F] px-4 py-2.5 text-sm font-medium text-white">Add job expenses</button>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <label htmlFor="profit-month" className="mb-1 block text-sm font-medium text-slate-700">Profit month</label>
+          <input id="profit-month" type="month" value={selectedMonth} onChange={(event) => {
+            setSelectedMonth(event.target.value || today.slice(0, 7))
+            setAdvisorMessages([])
+          }} className="input max-w-56" />
+        </div>
+        <p className="max-w-2xl text-xs text-slate-500">Billed revenue excludes VAT; cash received uses recorded payments. Profit includes only expenses entered and linked to jobs.</p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard icon={FileText} title="Billed revenue (ex VAT)" value={formatCurrency(monthlyBilledRevenue)} subtitle="Invoices dated this month" color="blue" />
+        <StatCard icon={CreditCard} title="Cash received" value={formatCurrency(monthlyCashReceived)} subtitle="Payments dated this month" color="green" />
+        <StatCard icon={Wrench} title="Job expenses" value={formatCurrency(monthlyExpenses)} subtitle="Expenses dated this month" color="red" />
+        <StatCard icon={CircleDollarSign} title="Billed net profit" value={formatCurrency(monthlyBilledRevenue - monthlyExpenses)} subtitle="Billed revenue less expenses" color="green" />
+        <StatCard icon={CircleDollarSign} title="Cash net profit" value={formatCurrency(monthlyCashReceived - monthlyExpenses)} subtitle="Cash received less expenses" color="blue" />
+      </div>
+
+      <Panel title={`Profit by job · ${selectedMonth}`} action={`${jobProfitRows.length} jobs`}>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-slate-200 text-slate-500">
+              <tr>
+                <th className="py-3 pr-4 font-medium">Job / customer</th>
+                <th className="py-3 pr-4 font-medium">Billed ex VAT</th>
+                <th className="py-3 pr-4 font-medium">Received</th>
+                <th className="py-3 pr-4 font-medium">Expenses</th>
+                <th className="py-3 pr-4 font-medium">Billed net</th>
+                <th className="py-3 font-medium">Cash net</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobProfitRows.map((row) => (
+                <tr key={row.job.id} className="border-b border-slate-100 last:border-0">
+                  <td className="py-3 pr-4"><span className="font-medium text-slate-900">{row.job.jobReference}</span><span className="block text-xs text-slate-500">{row.job.customer}</span></td>
+                  <td className="py-3 pr-4">{formatCurrency(row.billedRevenue)}</td>
+                  <td className="py-3 pr-4">{formatCurrency(row.cashReceived)}</td>
+                  <td className="py-3 pr-4">{formatCurrency(row.expenses)}</td>
+                  <td className="py-3 pr-4 font-medium">{formatCurrency(row.billedProfit)}</td>
+                  <td className="py-3 font-medium">{formatCurrency(row.cashProfit)}</td>
+                </tr>
+              ))}
+              {jobProfitRows.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-500">No invoices, payments, or expenses recorded for this month.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel title="Expense ledger" action={`${monthExpenses.length} entries this month`}>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-slate-200 text-slate-500">
+              <tr><th className="py-3 pr-4 font-medium">Date</th><th className="py-3 pr-4 font-medium">Job</th><th className="py-3 pr-4 font-medium">Category</th><th className="py-3 pr-4 font-medium">Description</th><th className="py-3 pr-4 font-medium">Amount</th><th className="py-3 font-medium">Action</th></tr>
+            </thead>
+            <tbody>
+              {monthExpenses.map((expense) => (
+                <tr key={expense.id} className="border-b border-slate-100 last:border-0">
+                  <td className="py-3 pr-4">{expense.expenseDate}</td>
+                  <td className="py-3 pr-4">{appState.jobs.find((job) => job.id === expense.jobId)?.jobReference ?? 'Unknown job'}</td>
+                  <td className="py-3 pr-4">{expense.category}</td>
+                  <td className="py-3 pr-4">{expense.description || '—'}</td>
+                  <td className="py-3 pr-4">{formatCurrency(expense.amount)}</td>
+                  <td className="py-3"><button type="button" className="text-sm text-red-600 hover:underline" onClick={() => deleteExpense(expense)}>Delete</button></td>
+                </tr>
+              ))}
+              {monthExpenses.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-500">No expenses recorded for this month.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel title="AI business advisor" action="Gemini">
+        <div className="space-y-4">
+          <div role="log" aria-live="polite" className="max-h-96 space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-4">
+            {advisorMessages.length === 0 && <p className="text-sm text-slate-500">Ask for feedback on this month’s profit, job performance, or expense patterns.</p>}
+            {advisorMessages.map((message, index) => (
+              <div key={`${message.role}-${index}`} className={`max-w-3xl rounded-xl p-3 text-sm ${message.role === 'user' ? 'ml-auto bg-[#163F2F] text-white' : 'bg-white text-slate-700 shadow-sm'}`}>
+                <p className="mb-1 text-xs font-semibold opacity-70">{message.role === 'user' ? 'You' : 'Business advisor'}</p>
+                <p className="whitespace-pre-wrap">{message.content}</p>
+              </div>
+            ))}
+            {isAskingAdvisor && <p role="status" className="text-sm text-slate-500">Reviewing the selected month’s totals...</p>}
+          </div>
+          {advisorError && <p role="alert" className="text-sm text-red-700">{advisorError}</p>}
+          <form className="space-y-3" onSubmit={askBusinessAdvisor}>
+            <Field label="Ask about your business">
+              <textarea required maxLength={1000} value={advisorQuestion} onChange={(event) => setAdvisorQuestion(event.target.value)} className="input min-h-24" placeholder="For example: Which jobs had the strongest profit this month, and what should I review?" />
+            </Field>
+            <button type="submit" disabled={isAskingAdvisor} className="rounded-xl bg-[#163F2F] px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60">{isAskingAdvisor ? 'Getting advice...' : 'Ask Gemini'}</button>
+          </form>
+          <p className="text-xs text-slate-500">Your question and this month’s financial totals, expense categories, and job references are sent to Gemini. Customer names and invoice images are not included. Advice is informational; verify decisions against your records.</p>
+        </div>
+      </Panel>
+    </div>
+  )
+}
+
 function ReportsPage() {
   const { appState } = useAppContext()
   const outstanding = appState.invoices.reduce((sum, invoice) => sum + invoice.outstandingBalance, 0)
@@ -2570,12 +3812,12 @@ function ReportsPage() {
       </div>
       <Panel title="Performance overview" action="Custom date range">
         <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="dashboard-info-card rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm text-slate-500">Jobs by technician</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">{appState.jobs.length}</p>
             <p className="text-xs text-slate-500">Current active site workload</p>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="dashboard-info-card rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm text-slate-500">Quotation conversion rate</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">{Math.round((approvedQuotes / Math.max(appState.quotations.length, 1)) * 100)}%</p>
             <p className="text-xs text-slate-500">From all quotations issued</p>
@@ -2694,7 +3936,7 @@ function SectionToolbar({ title, buttonLabel, onAction }: { title: string; butto
         <h2 className="mt-1 text-xl font-semibold text-slate-900">{title}</h2>
       </div>
       {buttonLabel && (
-        <button type="button" onClick={onAction} className="inline-flex items-center gap-2 rounded-xl bg-[#101B2B] px-4 py-2 text-sm font-medium text-white">
+        <button type="button" onClick={onAction} className="inline-flex items-center gap-2 rounded-xl bg-[#163F2F] px-4 py-2 text-sm font-medium text-white">
           <Plus size={16} />
           {buttonLabel}
         </button>
@@ -2896,7 +4138,7 @@ function QuickCreateModal({
           {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
           <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
             <button type="button" disabled={isSaving} onClick={onClose} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
-            <button type="submit" disabled={isSaving} className="rounded-xl bg-[#101B2B] px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{isSaving ? 'Saving...' : saveLabel}</button>
+            <button type="submit" disabled={isSaving} className="rounded-xl bg-[#163F2F] px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{isSaving ? 'Saving...' : saveLabel}</button>
           </div>
         </form>
       </div>
@@ -2906,10 +4148,10 @@ function QuickCreateModal({
 
 function Panel({ title, action, children }: { title: string; action?: string; children: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-        {action && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{action}</span>}
+    <div className="dashboard-panel rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="dashboard-panel-header mb-4 flex items-center justify-between gap-3">
+        <h3 className="dashboard-panel-title text-lg font-semibold text-slate-900">{title}</h3>
+        {action && <span className="dashboard-panel-action rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{action}</span>}
       </div>
       {children}
     </div>
@@ -2917,27 +4159,18 @@ function Panel({ title, action, children }: { title: string; action?: string; ch
 }
 
 function StatCard({ icon: Icon, title, value, subtitle, color }: { icon: any; title: string; value: string; subtitle: string; color: string }) {
-  const paletteMap: Record<string, string> = {
-    blue: 'bg-[#2675D8]/10 text-[#2675D8]',
-    amber: 'bg-[#E89A35]/10 text-[#E89A35]',
-    green: 'bg-[#16A36A]/10 text-[#16A36A]',
-    red: 'bg-[#D94A4A]/10 text-[#D94A4A]',
-    gold: 'bg-[#C6A15B]/10 text-[#C6A15B]',
-    navy: 'bg-[#101B2B]/10 text-[#101B2B]',
-  }
-
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className={`dashboard-stat-card dashboard-stat-card--${color} rounded-2xl border border-slate-200 bg-white p-4 shadow-sm`}>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm text-slate-500">{title}</p>
-          <p className="mt-2 text-3xl font-semibold text-slate-900">{value}</p>
+          <p className="dashboard-stat-label text-sm text-slate-500">{title}</p>
+          <p className="dashboard-stat-value mt-2 text-3xl font-semibold text-slate-900">{value}</p>
         </div>
-        <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${paletteMap[color]}`}>
+        <div className="dashboard-stat-icon flex h-12 w-12 items-center justify-center rounded-xl">
           <Icon size={22} />
         </div>
       </div>
-      <p className="mt-3 text-xs text-slate-500">{subtitle}</p>
+      <p className="dashboard-stat-subtitle mt-3 text-xs text-slate-500">{subtitle}</p>
     </div>
   )
 }
