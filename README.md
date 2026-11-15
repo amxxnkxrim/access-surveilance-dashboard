@@ -40,9 +40,23 @@ A production-style access control, security, and maintenance business management
 2. Copy the project URL and anon key into `.env`.
 3. If this is a new project, run `supabase/migrations/001_init.sql` once in the Supabase SQL editor.
 4. Run `supabase/migrations/002_app_access_policies.sql` to repair profile columns and apply role-based RLS policies. This second migration is safe to rerun. If `role` or `employment_status` is missing, it adds them and gives existing profiles the least-privileged `TECHNICIAN` role.
-5. Optionally run `supabase/seed.sql` for starter company configuration.
-6. In Authentication, enable email sign-in.
-7. Add storage buckets for documents, photos, and signed PDFs if you plan to enable file uploads.
+5. Run `supabase/migrations/003_job_expenses.sql` to add the job expense ledger and its admin-only row-level security policy.
+6. Optionally run `supabase/seed.sql` for starter company configuration.
+7. In Authentication, enable email sign-in.
+8. Add storage buckets for documents, photos, and signed PDFs if you plan to enable other file uploads.
+
+### Profit and AI document extraction
+
+The **Profit & expenses** page calculates monthly billed net profit (invoice subtotal excluding VAT, less job expenses) and cash net profit (payments received, less job expenses), plus both figures per job. Expenses must be assigned to a job and use their expense date for monthly totals. Add itemized expenses from the separate **Add job expenses** screen. Opening a job in **Jobs** shows a read-only expense summary with a client-ready PDF download; the summary has no entry or edit controls. The Profit & expenses summary shows the expense ledger before the AI business advisor. The advisor receives only the selected month's totals, expense categories, job references, and the user's question; customer names and invoice images are not included.
+
+To enable invoice/receipt extraction, install the Supabase CLI, set the Gemini API key as a server-side secret, and deploy the Edge Function:
+
+```bash
+supabase secrets set GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+supabase functions deploy extract-financial-document
+```
+
+Never put the Gemini key in a `VITE_*` variable or the browser bundle. When a user chooses **Analyze with Gemini**, the selected image or PDF is sent to Google Gemini for extraction and is not stored by the app. The user must review and confirm the extracted values before an invoice or expense is saved. Manual expense entry remains available without AI extraction.
 
 ## First administrator account
 
@@ -59,13 +73,18 @@ Demo credentials are not used in production mode; they are only retained as a lo
 
 ## Deployment
 
-1. Build the production bundle:
+### Quick publish with Netlify Drop
+
+1. Make sure `.env` contains `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. These Vite values are included in the public frontend bundle; never use a Supabase `service_role` key in the app.
+2. In the project folder, run:
    ```bash
-   npm run build
+   npm.cmd run build
    ```
-2. Deploy the `dist/` output to a static host such as Vercel, Netlify, or Cloudflare Pages.
-3. Add the same environment variables to your production deployment.
-4. Ensure Supabase security policies and storage buckets are configured before production use.
+3. Sign in to Netlify Drop at `https://app.netlify.com/drop` and drag the generated `dist/` folder onto the page.
+4. Open the Netlify URL on each phone. In the mobile browser menu, choose **Add to Home Screen** to install it like an app.
+5. In Supabase Authentication URL configuration, set the Netlify URL as the Site URL and add it to the allowed redirect URLs.
+
+The `public/_redirects` file keeps client-side routes such as `/jobs` working when a phone opens or refreshes a deep link. To publish later code changes, build again and upload the new `dist/` folder. For automatic deploys on every code change, connect a Git repository to Netlify or Vercel and set the same two `VITE_SUPABASE_*` variables in the host's environment settings.
 
 ## Important limitations
 
