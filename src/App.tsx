@@ -184,6 +184,25 @@ interface FinancialDocumentExtraction {
   total: number
   description: string
   expenseCategory: string
+  equipmentName: string
+  manufacturer: string
+  model: string
+  serialNumber: string
+  quantity: number
+  category: string
+  lineItems: FinancialDocumentLineItem[]
+}
+
+interface FinancialDocumentLineItem {
+  itemName: string
+  quantity: number
+  unitPrice: number
+  lineTotal: number
+  expenseCategory: string
+  equipmentCategory: string
+  manufacturer: string
+  model: string
+  serialNumber: string
 }
 
 interface AdvisorMessage {
@@ -366,8 +385,8 @@ const navItems = [
   { label: 'Profit & expenses', to: '/profit', icon: CircleDollarSign, roles: ['ADMIN', 'OFFICE_ADMIN'] },
   { label: 'Staff', to: '/staff', icon: UserCog, roles: ['ADMIN'] },
   { label: 'Reports', to: '/reports', icon: Gauge, roles: ['ADMIN', 'OFFICE_ADMIN'] },
-  { label: 'Settings', to: '/settings', icon: Settings, roles: ['ADMIN'] },
   { label: 'Data manager', to: '/data', icon: Database, roles: ['ADMIN'] },
+  { label: 'Settings', to: '/settings', icon: Settings, roles: ['ADMIN'] },
 ]
 
 const expenseCategories: ExpenseCategory[] = ['Fuel', '20mm pipe', '25mm pipe', 'Cameras', 'Sprag', 'Other equipment', 'Wages', 'Other']
@@ -476,7 +495,7 @@ const prepareFinancialDocument = async (file: File) => {
 
   if (file.type.startsWith('image/')) {
     const image = await createImageBitmap(file)
-    const scale = Math.min(1, 1800 / Math.max(image.width, image.height))
+    const scale = Math.min(1, 1400 / Math.max(image.width, image.height))
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(image.width * scale))
     canvas.height = Math.max(1, Math.round(image.height * scale))
@@ -498,6 +517,29 @@ const prepareFinancialDocument = async (file: File) => {
   }
 
   return { mimeType, imageBase64: await readBlobAsBase64(documentBlob) }
+}
+
+const getEdgeFunctionError = async (error: unknown) => {
+  if (!(error instanceof Error)) return 'The Edge Function returned an unexpected error.'
+
+  const context = (error as Error & { context?: Response }).context
+  if (context) {
+    try {
+      const body = await context.clone().json() as { error?: unknown }
+      if (typeof body.error === 'string' && body.error.trim()) {
+        return body.error
+      }
+    } catch {
+      try {
+        const text = await context.clone().text()
+        if (text.trim()) return text.trim()
+      } catch {
+        // Keep the original error message if the response has no readable body.
+      }
+    }
+  }
+
+  return error.message
 }
 
 const getStatusClass = (status: string) => {
@@ -533,18 +575,6 @@ const loadState = (): AppState => {
     }
   } catch {
     return seedState
-  }
-}
-
-const loadSession = () => {
-  if (typeof window === 'undefined') return null
-  const stored = window.localStorage.getItem(SESSION_KEY)
-  if (!stored) return null
-
-  try {
-    return JSON.parse(stored) as UserProfile | null
-  } catch {
-    return null
   }
 }
 
@@ -860,7 +890,7 @@ const AppStateContext = createContext<{
 
 function AppProvider({ children }: { children: ReactNode }) {
   const [appState, setAppState] = useState<AppState>(loadState)
-  const [session, setSession] = useState<UserProfile | null>(() => isSupabaseConfigured ? null : loadSession())
+  const [session, setSession] = useState<UserProfile | null>(null)
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured)
   const [dataLoading, setDataLoading] = useState(false)
   const [dataError, setDataError] = useState('')
@@ -882,44 +912,18 @@ function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
+      setSession(null)
+      setAuthLoading(false)
       return
     }
 
     const client = supabase
     let isActive = true
 
-    const syncSession = async () => {
-      const { data: { session: activeSession }, error } = await client.auth.getSession()
-      if (!isActive) return
-
-      if (error) {
-        console.error('Supabase session sync failed:', error)
-        setSession(null)
-        setAuthLoading(false)
-        setDataLoading(false)
-        return
-      }
-
-      if (!activeSession?.user?.email) {
-        setSession(null)
-        setAuthLoading(false)
-        setDataLoading(false)
-        return
-      }
-
-      const profile = await getSupabaseProfileFromEmail(activeSession.user.email)
-      if (!profile) {
-        setSession(null)
-        setAuthLoading(false)
-        setDataLoading(false)
-        return
-      }
-
-      setSession(normalizeSupabaseProfile(profile))
-      setAuthLoading(false)
-    }
-
-    syncSession()
+    void client.auth.signOut()
+    setSession(null)
+    setAuthLoading(false)
+    setDataLoading(false)
 
     const { data: { subscription } } = client.auth.onAuthStateChange(async (_event, activeSession) => {
       if (!isActive) return
@@ -1226,12 +1230,6 @@ function AppLayout() {
               </div>
             </div>
             <div className="space-y-2 text-sm text-slate-300">
-              {session?.role === 'ADMIN' && (
-                <button className="flex w-full items-center gap-2 rounded-lg px-2 py-2 hover:bg-slate-800" onClick={() => window.location.assign('/settings')}>
-                  <Settings size={16} />
-                  Settings
-                </button>
-              )}
               <button className="flex w-full items-center gap-2 rounded-lg px-2 py-2 hover:bg-slate-800" onClick={logout}>
                 <LogOut size={16} />
                 Logout
@@ -1380,30 +1378,30 @@ function LoginPage() {
           </div>
         </div>
 
-        <div className="p-8 md:p-12">
+        <div className="bg-white p-8 text-slate-900 md:p-12">
           <div className="mb-8">
-            <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Welcome back</p>
-            <h2 className="mt-3 text-3xl font-semibold text-white">Sign in</h2>
+            <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Welcome back</p>
+            <h2 className="mt-3 text-3xl font-semibold text-slate-900">Sign in</h2>
           </div>
 
           <form className="space-y-5" onSubmit={handleSubmit(onSubmit)} autoComplete="on">
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-200">Email address</label>
-              <input type="email" autoComplete="username" {...register('email')} className="w-full rounded-xl border border-slate-600 bg-slate-800 px-4 py-3 text-white outline-none focus:border-[#2C8D58]" placeholder="you@company.com" />
+              <label className="mb-2 block text-sm font-medium text-slate-700">Email address</label>
+              <input type="email" autoComplete="username" {...register('email')} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-[#2C8D58]" placeholder="you@company.com" />
               {errors.email && <p className="mt-2 text-sm text-red-400">{errors.email.message}</p>}
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-200">Password</label>
-              <div className="flex items-center rounded-xl border border-slate-600 bg-slate-800 px-4">
-                <input type={showPassword ? 'text' : 'password'} autoComplete="current-password" {...register('password')} className="w-full bg-transparent py-3 text-white outline-none" placeholder="Enter password" />
-                <button type="button" className="px-2 text-sm text-slate-300" onClick={() => setShowPassword((value) => !value)}>{showPassword ? 'Hide' : 'Show'}</button>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Password</label>
+              <div className="flex items-center rounded-xl border border-slate-300 bg-white px-4">
+                <input type={showPassword ? 'text' : 'password'} autoComplete="current-password" {...register('password')} className="w-full bg-transparent py-3 text-slate-900 outline-none" placeholder="Enter password" />
+                <button type="button" className="px-2 text-sm text-slate-500" onClick={() => setShowPassword((value) => !value)}>{showPassword ? 'Hide' : 'Show'}</button>
               </div>
               {errors.password && <p className="mt-2 text-sm text-red-400">{errors.password.message}</p>}
             </div>
 
-            <div className="flex items-center justify-between text-sm text-slate-300">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={rememberEmail} onChange={(event) => setRememberEmail(event.target.checked)} className="rounded border-slate-500 bg-slate-800" /> Remember email</label>
+            <div className="flex items-center justify-between text-sm text-slate-600">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={rememberEmail} onChange={(event) => setRememberEmail(event.target.checked)} className="rounded border-slate-400" /> Remember email</label>
               <button type="button" className="text-[#2C8D58]">Forgot password?</button>
             </div>
 
@@ -1413,8 +1411,8 @@ function LoginPage() {
               {pending ? 'Signing in...' : 'Login'}
             </button>
 
-            <div className="rounded-xl border border-slate-700 bg-slate-800/70 p-4 text-sm text-slate-300">
-              <p className="font-medium text-white">Access requirements</p>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              <p className="font-medium text-slate-900">Access requirements</p>
               <p className="mt-2">New users must exist in Supabase Auth and have an active profile row with a valid role before they can log in to the dashboard.</p>
             </div>
           </form>
@@ -1438,6 +1436,7 @@ function FeatureCard({ icon: Icon, title, text }: { icon: any; title: string; te
 
 function DashboardPage() {
   const { appState } = useAppContext()
+  const navigate = useNavigate()
 
   const metrics = useMemo(() => {
     const totalCustomers = appState.customers.length
@@ -1484,17 +1483,17 @@ function DashboardPage() {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={Users} title="Total customers" value={String(metrics.totalCustomers)} subtitle="Across all active accounts" color="blue" />
-        <StatCard icon={ClipboardList} title="Active jobs" value={String(metrics.activeJobs)} subtitle="Currently in motion" color="amber" />
-        <StatCard icon={CheckCircle2} title="Completed jobs" value={String(metrics.completedThisMonth)} subtitle="This month" color="green" />
-        <StatCard icon={CircleDollarSign} title="Outstanding invoices" value={formatCurrency(metrics.outstandingInvoices)} subtitle="Current balances" color="red" />
+        <StatCard icon={Users} title="Total customers" value={String(metrics.totalCustomers)} subtitle="View all active accounts" color="blue" onClick={() => navigate('/customers')} />
+        <StatCard icon={ClipboardList} title="Active jobs" value={String(metrics.activeJobs)} subtitle="View jobs currently in motion" color="amber" onClick={() => navigate('/jobs?status=active')} />
+        <StatCard icon={CheckCircle2} title="Completed jobs" value={String(metrics.completedThisMonth)} subtitle="View completed jobs" color="green" onClick={() => navigate('/jobs?status=Completed')} />
+        <StatCard icon={CircleDollarSign} title="Outstanding invoices" value={formatCurrency(metrics.outstandingInvoices)} subtitle="View current balances" color="red" onClick={() => navigate('/invoices')} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={FileText} title="Pending quotations" value={String(metrics.pendingQuotations)} subtitle="Awaiting approval" color="gold" />
-        <StatCard icon={CreditCard} title="Monthly revenue" value={formatCurrency(metrics.monthlyRevenue)} subtitle="Collected this month" color="green" />
-        <StatCard icon={CalendarDays} title="Upcoming maintenance" value={String(metrics.upcomingMaintenance)} subtitle="Scheduled visits" color="blue" />
-        <StatCard icon={Wrench} title="Installed equipment" value={String(metrics.installedEquipment)} subtitle="Active asset count" color="navy" />
+        <StatCard icon={FileText} title="Pending quotations" value={String(metrics.pendingQuotations)} subtitle="View quotations awaiting approval" color="gold" onClick={() => navigate('/quotations')} />
+        <StatCard icon={CreditCard} title="Monthly revenue" value={formatCurrency(metrics.monthlyRevenue)} subtitle="View monthly profit and payments" color="green" onClick={() => navigate('/profit')} />
+        <StatCard icon={CalendarDays} title="Upcoming maintenance" value={String(metrics.upcomingMaintenance)} subtitle="View scheduled maintenance" color="blue" onClick={() => navigate('/maintenance')} />
+        <StatCard icon={Wrench} title="Installed equipment" value={String(metrics.installedEquipment)} subtitle="View active equipment assets" color="navy" onClick={() => navigate('/equipment')} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.6fr_1fr]">
@@ -1947,7 +1946,7 @@ function EquipmentPage() {
         technician_id: values.technicianId || null,
         notes: values.notes || null,
       })
-      if (error) throw new Error(error.message)
+      if (error) throw new Error(await getEdgeFunctionError(error))
       if (!await refreshData()) throw new Error('Equipment was saved, but the latest records could not be reloaded.')
       return
     }
@@ -2096,7 +2095,7 @@ function EquipmentPage() {
 }
 
 function JobExpenseEntrySheet({ job }: { job: Job }) {
-  const { appState, updateState } = useAppContext()
+  const { appState, updateState, refreshData } = useAppContext()
   const [today] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const newItem = (): ExpenseEntryLine => ({
     id: createReference('expense-line'),
@@ -2151,7 +2150,7 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
           description: `${item.itemName} (${item.quantity} x ${formatCurrency(item.unitPrice)} each)`,
           amount: item.amount,
         }))).select('*')
-        if (error) throw new Error(error.message)
+        if (error) throw new Error(await getEdgeFunctionError(error))
         if (!data || data.length !== preparedItems.length) {
           throw new Error('Expenses were saved, but the complete set of records was not returned.')
         }
@@ -2203,7 +2202,7 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
       const { data, error } = await supabase.functions.invoke<{ extraction: FinancialDocumentExtraction }>('extract-financial-document', {
         body: { documentType: 'supplier_receipt', mimeType, imageBase64 },
       })
-      if (error) throw new Error(error.message)
+      if (error) throw new Error(await getEdgeFunctionError(error))
       const extraction = data?.extraction
       if (!extraction || !Number.isFinite(extraction.total) || extraction.total <= 0) {
         throw new Error('The scanner returned incomplete amounts. Try a clearer image or enter the values manually.')
@@ -2212,15 +2211,89 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
       const category = expenseCategories.find((item) =>
         item.toLocaleLowerCase() === extraction.expenseCategory.toLocaleLowerCase(),
       ) ?? 'Other'
-      setItems((current) => current.map((item, index) => index === 0 ? {
-        ...item,
-        category,
-        itemName: extraction.description || extraction.counterparty || 'Supplier receipt item',
-        quantity: '1',
-        unitPrice: String(extraction.total),
-      } : item))
+      const extractedLines = extraction.lineItems?.length
+        ? extraction.lineItems
+        : [{
+          itemName: extraction.equipmentName || extraction.description || extraction.counterparty || 'Supplier receipt item',
+          quantity: extraction.quantity > 0 ? extraction.quantity : 1,
+          unitPrice: extraction.total,
+          lineTotal: extraction.total,
+          expenseCategory: category,
+          equipmentCategory: extraction.category,
+          manufacturer: extraction.manufacturer,
+          model: extraction.model,
+          serialNumber: extraction.serialNumber,
+        }]
+
+      setItems(extractedLines.map((line) => {
+        const lineCategory = expenseCategories.find((item) =>
+          item.toLocaleLowerCase() === line.expenseCategory.toLocaleLowerCase(),
+        ) ?? category
+        const quantity = line.quantity > 0 ? line.quantity : 1
+        const unitPrice = line.unitPrice > 0
+          ? line.unitPrice
+          : (line.lineTotal > 0 ? line.lineTotal / quantity : 0)
+        return {
+          id: createReference('expense-line'),
+          category: lineCategory,
+          itemName: line.itemName,
+          quantity: String(quantity),
+          unitPrice: String(Math.round(unitPrice * 100) / 100),
+        }
+      }))
       if (/^\d{4}-\d{2}-\d{2}$/.test(extraction.documentDate)) setExpenseDate(extraction.documentDate)
-      setSaveSuccess('Receipt read. Review the item and price before saving.')
+
+      const equipmentLines = extractedLines.filter((line) => {
+        const lineCategory = expenseCategories.find((item) =>
+          item.toLocaleLowerCase() === line.expenseCategory.toLocaleLowerCase(),
+        ) ?? category
+        return Boolean(line.itemName) && ['Cameras', 'Other equipment', '20mm pipe', '25mm pipe', 'Sprag'].includes(lineCategory)
+      })
+      if (equipmentLines.length) {
+        const customer = appState.customers.find((entry) => entry.fullName === job.customer)
+        if (isSupabaseConfigured && supabase) {
+          const equipmentRows = equipmentLines.map((line) => ({
+            equipment_id: createReference('AS-EQ'),
+            customer_id: customer?.id ?? null,
+            installation_address: job.siteAddress || customer?.address || null,
+            category: line.equipmentCategory || line.expenseCategory || category,
+            manufacturer: line.manufacturer || null,
+            model: line.model || line.itemName,
+            serial_number: line.serialNumber || null,
+            quantity: line.quantity > 0 ? line.quantity : 1,
+            installation_date: /^\d{4}-\d{2}-\d{2}$/.test(extraction.documentDate) ? extraction.documentDate : null,
+            condition: 'New',
+            status: 'Active',
+            notes: `Added from supplier receipt ${extraction.invoiceReference || ''}`.trim(),
+            associated_job_id: job.id,
+          }))
+          const { error: equipmentError } = await supabase.from('equipment').insert(equipmentRows)
+          if (equipmentError) throw new Error(`Receipt was read, but equipment could not be saved: ${equipmentError.message}`)
+          await refreshData()
+        } else {
+          const equipment = equipmentLines.map((line): Equipment => ({
+            id: createReference('local-equipment'),
+            equipmentId: createReference('AS-EQ'),
+            customerId: customer?.id ?? '',
+            installationAddress: job.siteAddress || customer?.address || '',
+            category: line.equipmentCategory || line.expenseCategory || category,
+            manufacturer: line.manufacturer,
+            model: line.model || line.itemName,
+            serialNumber: line.serialNumber,
+            quantity: line.quantity > 0 ? line.quantity : 1,
+            installationDate: /^\d{4}-\d{2}-\d{2}$/.test(extraction.documentDate) ? extraction.documentDate : '',
+            warrantyExpiry: '',
+            condition: 'New',
+            status: 'Active',
+            technician: job.assignedTechnician,
+            notes: `Added from supplier receipt ${extraction.invoiceReference || ''}`.trim(),
+          }))
+          updateState((current) => ({ ...current, equipment: [...equipment, ...current.equipment] }))
+        }
+        setSaveSuccess(`Receipt read. ${extractedLines.length} expense line${extractedLines.length === 1 ? '' : 's'} filled and ${equipmentLines.length} equipment item${equipmentLines.length === 1 ? '' : 's'} added to Equipment.`)
+      } else {
+        setSaveSuccess(`Receipt read. ${extractedLines.length} expense line${extractedLines.length === 1 ? '' : 's'} filled; review the items before saving.`)
+      }
       setReceiptFile(null)
     } catch (error) {
       setScanError(`Could not scan receipt: ${error instanceof Error ? error.message : 'Unexpected error.'}`)
@@ -2301,7 +2374,7 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
             setScanError('')
           }} className="input" />
           {scanError && <p role="alert" className="text-sm text-red-700">{scanError}</p>}
-          <button type="button" disabled={isSaved || isScanning} onClick={scanReceipt} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60">{isScanning ? 'Reading receipt...' : 'Analyze receipt'}</button>
+          <button type="button" disabled={isSaved || isScanning} onClick={scanReceipt} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60">{isScanning ? 'Reading receipt — please wait...' : 'Analyze receipt'}</button>
         </div>
       </details>
 
@@ -2334,14 +2407,22 @@ function JobExpenseSheet({ job }: { job: Job }) {
 
     const company = appState.companySettings
     const doc = new jsPDF()
-    doc.setFillColor(16, 27, 43)
+    doc.setFillColor(19, 37, 31)
     doc.rect(0, 0, 210, 30, 'F')
+    doc.setFillColor(185, 31, 38)
+    doc.rect(0, 30, 210, 3, 'F')
+    doc.setFillColor(255, 255, 255)
+    doc.roundedRect(14, 7, 16, 16, 3, 3, 'F')
+    doc.setTextColor(185, 31, 38)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.text('AS', 22, 17, { align: 'center' })
     doc.setTextColor(255, 255, 255)
     doc.setFontSize(15)
-    doc.text(company.companyName || 'Access Surveillance', 14, 14)
+    doc.text(company.companyName || 'Access Surveillance', 34, 14)
     doc.setFontSize(9)
     const companyContact = [company.phone, company.email, company.businessAddress].filter(Boolean).join(' | ')
-    if (companyContact) doc.text(doc.splitTextToSize(companyContact, 180), 14, 22)
+    if (companyContact) doc.text(doc.splitTextToSize(companyContact, 160), 34, 22)
 
     doc.setTextColor(16, 27, 43)
     doc.setFontSize(19)
@@ -2460,10 +2541,18 @@ function JobsPage() {
   const searchParams = new URLSearchParams(location.search)
   const dateFilter = searchParams.get('date') ?? ''
   const expandedJobId = searchParams.get('jobId')
+  const statusFilter = searchParams.get('status') ?? ''
   const [creating, setCreating] = useState(false)
   const customerOptions = [{ value: '', label: 'Select customer' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
   const technicianOptions = [{ value: '', label: 'Unassigned' }, ...appState.users.map((user) => ({ value: user.id, label: user.name }))]
-  const jobsToShow = dateFilter ? appState.jobs.filter((job) => job.createdDate === dateFilter) : appState.jobs
+  const activeStatuses: JobStatus[] = ['New', 'Awaiting quotation', 'Quotation sent', 'Approved', 'Scheduled', 'In progress', 'Awaiting parts']
+  const jobsToShow = dateFilter
+    ? appState.jobs.filter((job) => job.createdDate === dateFilter)
+    : statusFilter === 'active'
+      ? appState.jobs.filter((job) => activeStatuses.includes(job.status))
+      : statusFilter
+        ? appState.jobs.filter((job) => job.status === statusFilter)
+        : appState.jobs
 
   const saveJob = async (values: Record<string, string>) => {
     const jobReference = createReference('AS-J')
@@ -3601,7 +3690,7 @@ function ProfitExpensesPage() {
             className="input"
           />
         </Field>
-        <p className="text-xs text-slate-500">Images are reduced to a readable size before being sent to Google Gemini; PDFs are sent as selected. The document is not stored by the app. Review all extracted amounts before saving. Scanning may take up to 25 seconds.</p>
+        <p className="text-xs text-slate-500">Images are reduced to a readable size before being sent to Google Gemini; PDFs are sent as selected. The document is not stored by the app. Review all extracted amounts before saving. Scanning may take up to 60 seconds.</p>
         {scanError && <p role="alert" className="text-sm text-red-700">{scanError}</p>}
         {extraction && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">Read {extraction.counterparty || 'document'} · Total {formatCurrency(extraction.total)}. Confirm or edit the fields before saving.</p>}
         <button type="button" disabled={isExtracting} onClick={analyzeDocument} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-60">{isExtracting ? 'Reading document...' : 'Analyze with Gemini'}</button>
@@ -4158,9 +4247,14 @@ function Panel({ title, action, children }: { title: string; action?: string; ch
   )
 }
 
-function StatCard({ icon: Icon, title, value, subtitle, color }: { icon: any; title: string; value: string; subtitle: string; color: string }) {
+function StatCard({ icon: Icon, title, value, subtitle, color, onClick }: { icon: any; title: string; value: string; subtitle: string; color: string; onClick?: () => void }) {
   return (
-    <div className={`dashboard-stat-card dashboard-stat-card--${color} rounded-2xl border border-slate-200 bg-white p-4 shadow-sm`}>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`dashboard-stat-card dashboard-stat-card--${color} w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm ${onClick ? 'cursor-pointer' : ''}`}
+      disabled={!onClick}
+    >
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="dashboard-stat-label text-sm text-slate-500">{title}</p>
@@ -4171,7 +4265,7 @@ function StatCard({ icon: Icon, title, value, subtitle, color }: { icon: any; ti
         </div>
       </div>
       <p className="dashboard-stat-subtitle mt-3 text-xs text-slate-500">{subtitle}</p>
-    </div>
+    </button>
   )
 }
 

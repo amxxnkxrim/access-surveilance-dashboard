@@ -84,7 +84,17 @@ Demo credentials are not used in production mode; they are only retained as a lo
 4. Open the Netlify URL on each phone. In the mobile browser menu, choose **Add to Home Screen** to install it like an app.
 5. In Supabase Authentication URL configuration, set the Netlify URL as the Site URL and add it to the allowed redirect URLs.
 
-The `public/_redirects` file keeps client-side routes such as `/jobs` working when a phone opens or refreshes a deep link. To publish later code changes, build again and upload the new `dist/` folder. For automatic deploys on every code change, connect a Git repository to Netlify or Vercel and set the same two `VITE_SUPABASE_*` variables in the host's environment settings.
+The `public/_redirects` file keeps client-side routes such as `/jobs` working when a phone opens or refreshes a deep link.
+
+### Keep one Netlify URL for every update
+
+Netlify Drop URLs are temporary drop sites and should not be reused for later versions. For a permanent phone link:
+
+1. In Netlify, create a site from Git and connect this GitHub repository.
+2. Set the build command to `npm run build`, publish directory to `dist`, and add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Site configuration > Environment variables.
+3. Deploy the site once. Netlify keeps the same stable site URL and deploys each GitHub push automatically.
+4. Supabase data is saved in the shared Supabase database, not inside each Netlify copy. Every device using the same Netlify URL loads the same saved changes.
+5. Open the stable Netlify URL on the phone and add it to the home screen. Future GitHub pushes update it automatically; no new Netlify link is needed.
 
 ## Important limitations
 

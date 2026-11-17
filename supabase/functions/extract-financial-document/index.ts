@@ -11,6 +11,120 @@ const supportedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'applicatio
 const jsonResponse = (status: number, body: Record<string, unknown>) =>
   new Response(JSON.stringify(body), { status, headers: corsHeaders })
 
+const parseGeminiJson = (text: string) => {
+  let cleaned = text.trim()
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+  }
+
+  const start = cleaned.indexOf('{')
+  const last = cleaned.lastIndexOf('}')
+  if (start >= 0 && last > start) cleaned = cleaned.slice(start, last + 1)
+
+  const tryParse = (value: string) => JSON.parse(value)
+  try {
+    return tryParse(cleaned)
+  } catch {
+    let inString = false
+    let escaped = false
+    const normalized: string[] = []
+
+    for (let index = 0; index < cleaned.length; index += 1) {
+      const character = cleaned[index]
+      if (inString) {
+        if (escaped) {
+          normalized.push(character)
+          escaped = false
+        } else if (character === '\\') {
+          normalized.push(character)
+          escaped = true
+        } else if (character === '"') {
+          normalized.push(character)
+          inString = false
+        } else if (character === '\n' || character === '\r' || character === '\t') {
+          normalized.push(character === '\t' ? '\\t' : '\\n')
+        } else {
+          normalized.push(character)
+        }
+      } else if (character === '"') {
+        normalized.push(character)
+        inString = true
+      } else {
+        normalized.push(character)
+      }
+    }
+
+    let repaired = normalized.join('').replace(/,\s*([}\]])/g, '$1')
+    if (inString) repaired += '"'
+
+    const stack: string[] = []
+    inString = false
+    escaped = false
+    for (let index = 0; index < repaired.length; index += 1) {
+      const character = repaired[index]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (character === '\\') escaped = true
+        else if (character === '"') inString = false
+      } else if (character === '"') {
+        inString = true
+      } else if (character === '{') {
+        stack.push('}')
+      } else if (character === '[') {
+        stack.push(']')
+      } else if ((character === '}' || character === ']') && stack.at(-1) === character) {
+        stack.pop()
+      }
+    }
+    repaired += stack.reverse().join('')
+
+    return tryParse(repaired)
+  }
+}
+
+const callGeminiWithRetry = async (
+  geminiApiKey: string,
+  model: string,
+  body: Record<string, unknown>,
+) => {
+  let lastResponse: Response | null = null
+  const retryDelays = [1500, 3000, 6000]
+
+  for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+    let response: Response
+    try {
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(45_000),
+          body: JSON.stringify(body),
+        },
+      )
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'TimeoutError') {
+        if (attempt < retryDelays.length) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]))
+          continue
+        }
+      }
+      throw error
+    }
+
+    lastResponse = response
+    if (response.ok) return response
+
+    if (![429, 503, 502, 504].includes(response.status) || attempt === retryDelays.length) {
+      return response
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]))
+  }
+
+  return lastResponse
+}
+
 const getSupabasePublishableKey = () => {
   const legacyKey = Deno.env.get('SUPABASE_ANON_KEY')
   if (legacyKey) return legacyKey
@@ -33,7 +147,7 @@ Deno.serve(async (request) => {
   const authorization = request.headers.get('authorization')
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const supabasePublishableKey = getSupabasePublishableKey()
-  const geminiApiKey = Deno.env.get('GEMINI_API_KEY')
+  const geminiApiKey = Deno.env.get('GEMINI_API_KEY') || Deno.env.get('gemini key')
   if (!authorization || !supabaseUrl || !supabasePublishableKey) {
     return jsonResponse(401, { error: 'Sign in is required.' })
   }
@@ -97,18 +211,14 @@ Deno.serve(async (request) => {
 
       let adviceResponse: Response
       try {
-        adviceResponse = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        adviceResponse = await callGeminiWithRetry(
+          geminiApiKey,
+          'gemini-3.5-flash-lite',
           {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(25_000),
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.3, maxOutputTokens: 512 },
-            }),
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 512 },
           },
-        )
+        ) as Response
       } catch (error) {
         if (error instanceof DOMException && error.name === 'TimeoutError') {
           return jsonResponse(504, { error: 'The advisor took too long to respond. Try again with a shorter question.' })
@@ -145,26 +255,26 @@ Deno.serve(async (request) => {
       'Return subtotal, VAT, and total as numeric values without currency symbols; use 0 when a value is absent.',
       `For expenseCategory choose one of: ${expenseCategories.join(', ')}.`,
       'Classify wages/labour as Wages, fuel/petrol/diesel as Fuel, camera purchases as Cameras, and pipe sizes as 20mm pipe or 25mm pipe when identifiable.',
+      'Extract every purchased or supplied line item separately.',
+      'For each line item return itemName, quantity, unitPrice, lineTotal, expenseCategory, equipmentCategory, manufacturer, model, and serialNumber.',
+      'Quantity and unitPrice must be actual printed values. If unitPrice is absent, calculate it only from a readable quantity and line total.',
       'Do not guess unreadable values; use 0 or an empty string.',
     ].join(' ')
     let geminiResponse: Response
     try {
-      geminiResponse = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+      geminiResponse = await callGeminiWithRetry(
+        geminiApiKey,
+        'gemini-3.5-flash-lite',
         {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(25_000),
-        body: JSON.stringify({
           contents: [{
             parts: [
               { text: prompt },
-              { inline_data: { mime_type: mimeType, data: imageBase64 } },
+              { inlineData: { mimeType, data: imageBase64 } },
             ],
           }],
           generationConfig: {
             temperature: 0,
-            maxOutputTokens: 256,
+            maxOutputTokens: 2048,
             responseMimeType: 'application/json',
             responseSchema: {
               type: 'OBJECT',
@@ -178,21 +288,56 @@ Deno.serve(async (request) => {
                 total: { type: 'NUMBER' },
                 description: { type: 'STRING' },
                 expenseCategory: { type: 'STRING', enum: expenseCategories },
+                equipmentName: { type: 'STRING' },
+                manufacturer: { type: 'STRING' },
+                model: { type: 'STRING' },
+                serialNumber: { type: 'STRING' },
+                quantity: { type: 'NUMBER' },
+                category: { type: 'STRING' },
+                lineItems: {
+                  type: 'ARRAY',
+                  items: {
+                    type: 'OBJECT',
+                    properties: {
+                      itemName: { type: 'STRING' },
+                      quantity: { type: 'NUMBER' },
+                      unitPrice: { type: 'NUMBER' },
+                      lineTotal: { type: 'NUMBER' },
+                      expenseCategory: { type: 'STRING', enum: expenseCategories },
+                      equipmentCategory: { type: 'STRING' },
+                      manufacturer: { type: 'STRING' },
+                      model: { type: 'STRING' },
+                      serialNumber: { type: 'STRING' },
+                    },
+                    required: ['itemName', 'quantity', 'unitPrice', 'lineTotal', 'expenseCategory', 'equipmentCategory', 'manufacturer', 'model', 'serialNumber'],
+                  },
+                },
               },
-              required: ['invoiceReference', 'documentDate', 'dueDate', 'counterparty', 'subtotal', 'vat', 'total', 'description', 'expenseCategory'],
+              required: ['invoiceReference', 'documentDate', 'dueDate', 'counterparty', 'subtotal', 'vat', 'total', 'description', 'expenseCategory', 'equipmentName', 'manufacturer', 'model', 'serialNumber', 'quantity', 'category', 'lineItems'],
             },
           },
-        }),
         },
-      )
+      ) as Response
     } catch (error) {
       if (error instanceof DOMException && error.name === 'TimeoutError') {
-        return jsonResponse(504, { error: 'Document scanning took too long. Try a clearer, smaller image or try again.' })
+        return jsonResponse(504, { error: 'Document scanning took longer than 60 seconds. Try a clearer, smaller image and scan again.' })
       }
       throw error
     }
     if (!geminiResponse.ok) {
-      return jsonResponse(502, { error: 'Gemini could not read this document. Check the image and try again.' })
+      let geminiError = ''
+      try {
+        const geminiBody = await geminiResponse.json()
+        const message = geminiBody.error?.message
+        if (typeof message === 'string') geminiError = message.slice(0, 300)
+      } catch {
+        geminiError = ''
+      }
+      return jsonResponse(502, {
+        error: geminiError
+          ? `Gemini rejected the request: ${geminiError}`
+          : `Gemini could not read this document (HTTP ${geminiResponse.status}). Check the image and try again.`,
+      })
     }
 
     const result = await geminiResponse.json()
@@ -201,7 +346,12 @@ Deno.serve(async (request) => {
       return jsonResponse(502, { error: 'Gemini returned no readable document details.' })
     }
 
-    const extraction = JSON.parse(text)
+    let extraction: Record<string, unknown>
+    try {
+      extraction = parseGeminiJson(text)
+    } catch {
+      return jsonResponse(502, { error: 'Gemini returned malformed document JSON. Try a clearer, smaller receipt image.' })
+    }
     if (typeof extraction.total !== 'number' || !Number.isFinite(extraction.total) || extraction.total < 0) {
       return jsonResponse(502, { error: 'Gemini returned an invalid total. Review the document and try again.' })
     }
@@ -217,9 +367,42 @@ Deno.serve(async (request) => {
         total: extraction.total,
         description: typeof extraction.description === 'string' ? extraction.description : '',
         expenseCategory: expenseCategories.includes(extraction.expenseCategory) ? extraction.expenseCategory : 'Other',
+        equipmentName: typeof extraction.equipmentName === 'string' ? extraction.equipmentName : '',
+        manufacturer: typeof extraction.manufacturer === 'string' ? extraction.manufacturer : '',
+        model: typeof extraction.model === 'string' ? extraction.model : '',
+        serialNumber: typeof extraction.serialNumber === 'string' ? extraction.serialNumber : '',
+        quantity: typeof extraction.quantity === 'number' && Number.isFinite(extraction.quantity) ? Math.max(1, Math.round(extraction.quantity)) : 1,
+        category: typeof extraction.category === 'string' ? extraction.category : '',
+        lineItems: Array.isArray(extraction.lineItems)
+          ? extraction.lineItems
+            .filter((item: Record<string, unknown>) => typeof item.itemName === 'string' && item.itemName.trim())
+            .map((item: Record<string, unknown>) => {
+              const quantity = typeof item.quantity === 'number' && Number.isFinite(item.quantity) && item.quantity > 0
+                ? item.quantity
+                : 1
+              const lineTotal = typeof item.lineTotal === 'number' && Number.isFinite(item.lineTotal) ? item.lineTotal : 0
+              const printedUnitPrice = typeof item.unitPrice === 'number' && Number.isFinite(item.unitPrice) ? item.unitPrice : 0
+              return {
+                itemName: String(item.itemName).trim(),
+                quantity,
+                unitPrice: printedUnitPrice > 0 ? printedUnitPrice : (lineTotal > 0 ? lineTotal / quantity : 0),
+                lineTotal,
+                expenseCategory: expenseCategories.includes(String(item.expenseCategory)) ? String(item.expenseCategory) : 'Other',
+                equipmentCategory: typeof item.equipmentCategory === 'string' ? item.equipmentCategory : '',
+                manufacturer: typeof item.manufacturer === 'string' ? item.manufacturer : '',
+                model: typeof item.model === 'string' ? item.model : '',
+                serialNumber: typeof item.serialNumber === 'string' ? item.serialNumber : '',
+              }
+            })
+          : [],
       },
     })
-  } catch {
-    return jsonResponse(500, { error: 'Document extraction failed. Check the document and try again.' })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.slice(0, 300) : ''
+    return jsonResponse(500, {
+      error: detail
+        ? `Document extraction failed: ${detail}`
+        : 'Document extraction failed. Check the document and try again.',
+    })
   }
 })
