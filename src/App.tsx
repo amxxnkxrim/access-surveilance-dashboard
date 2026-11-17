@@ -8,6 +8,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import jsPDF from 'jspdf'
 import { getSupabaseProfileFromEmail, isSupabaseConfigured, supabase } from './lib/supabase'
+import accessSurveillanceLogo from './assets/access-surveillance-logo.png'
 import SupabaseDataManager from './SupabaseDataManager'
 
 const STORAGE_KEY = 'access-surveillance-state-v1'
@@ -2402,134 +2403,223 @@ function JobExpenseSheet({ job }: { job: Job }) {
     .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate))
   const total = expenses.reduce((sum, expense) => sum + expense.amount, 0)
 
-  const downloadPdf = () => {
+  const downloadPdf = async () => {
     if (!expenses.length) return
 
     const company = appState.companySettings
     const doc = new jsPDF()
-    doc.setFillColor(19, 37, 31)
-    doc.rect(0, 0, 210, 30, 'F')
-    doc.setFillColor(185, 31, 38)
-    doc.rect(0, 30, 210, 3, 'F')
-    doc.setFillColor(255, 255, 255)
-    doc.roundedRect(14, 7, 16, 16, 3, 3, 'F')
-    doc.setTextColor(185, 31, 38)
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(9)
-    doc.text('AS', 22, 17, { align: 'center' })
-    doc.setTextColor(255, 255, 255)
-    doc.setFontSize(15)
-    doc.text(company.companyName || 'Access Surveillance', 34, 14)
-    doc.setFontSize(9)
-    const companyContact = [company.phone, company.email, company.businessAddress].filter(Boolean).join(' | ')
-    if (companyContact) doc.text(doc.splitTextToSize(companyContact, 160), 34, 22)
+    let logoData: string
+    try {
+      const logoResponse = await fetch(accessSurveillanceLogo)
+      if (!logoResponse.ok) throw new Error('Logo asset could not be loaded.')
+      logoData = `data:image/png;base64,${await readBlobAsBase64(await logoResponse.blob())}`
+    } catch (error) {
+      window.alert(`Could not prepare the client PDF: ${error instanceof Error ? error.message : 'Logo asset could not be loaded.'}`)
+      return
+    }
 
-    doc.setTextColor(16, 27, 43)
-    doc.setFontSize(19)
-    doc.text('Job expense summary', 14, 43)
+    const brandGreen = [37, 131, 72] as const
+    const brandRed = [197, 43, 50] as const
+    const ink = [39, 47, 51] as const
+    const line = [202, 216, 206] as const
+
+    doc.addImage(logoData, 'PNG', 70, 5, 70, 18.5)
+    doc.setTextColor(...ink)
+    doc.setFontSize(16)
+    doc.setFont('helvetica', 'bold')
+    doc.text('CLIENT EXPENSE SUMMARY', 105, 34, { align: 'center' })
+    doc.setFont('helvetica', 'normal')
     doc.setFontSize(10)
-    doc.text(`Customer: ${job.customer || 'Not specified'}`, 14, 53)
-    doc.text(`Job reference: ${job.jobReference}`, 14, 60)
-    doc.text(`Site: ${job.siteAddress || 'Not specified'}`, 14, 67)
-    doc.text(`Prepared: ${format(new Date(), 'dd MMM yyyy')}`, 14, 74)
+    doc.setTextColor(95, 105, 99)
+    const companyContact = [company.phone, company.email].filter(Boolean).join('  |  ')
+    if (companyContact) doc.text(companyContact, 105, 40, { align: 'center' })
+
+    const sectionBar = (label: string, y: number) => {
+      doc.setFillColor(...brandGreen)
+      doc.rect(14, y, 182, 7, 'F')
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      doc.setTextColor(255, 255, 255)
+      doc.text(label, 17, y + 4.8)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(...ink)
+    }
+
+    sectionBar('1. CLIENT & JOB DETAILS', 49)
+    doc.setDrawColor(...line)
+    doc.setLineWidth(0.25)
+    doc.rect(14, 56, 182, 24)
+    doc.line(105, 56, 105, 80)
+    doc.line(14, 68, 196, 68)
+    doc.setFontSize(9)
+    doc.setTextColor(90, 99, 94)
+    doc.text('Client / company', 17, 61)
+    doc.text('Job card number', 108, 61)
+    doc.text('Site address', 17, 73)
+    doc.text('Date prepared', 108, 73)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...ink)
+    doc.text(doc.splitTextToSize(job.customer || 'Not specified', 84), 17, 65.5)
+    doc.text(doc.splitTextToSize(job.jobReference, 84), 108, 65.5)
+    doc.text(doc.splitTextToSize(job.siteAddress || 'Not specified', 84), 17, 77.5)
+    doc.text(format(new Date(), 'dd MMM yyyy'), 108, 77.5)
+    doc.setFont('helvetica', 'normal')
 
     const drawTableHeader = (y: number) => {
-      doc.setFillColor(241, 245, 249)
-      doc.rect(14, y - 5, 182, 9, 'F')
+      doc.setFillColor(232, 239, 234)
+      doc.rect(14, y - 5, 182, 9, 'FD')
+      doc.setDrawColor(...line)
       doc.setFontSize(9)
       doc.setFont('helvetica', 'bold')
-      doc.text('Item / description', 17, y)
-      doc.text('Category', 119, y)
-      doc.text('Date', 157, y)
+      doc.setTextColor(...ink)
+      doc.text('ITEM / DESCRIPTION', 17, y)
+      doc.text('CATEGORY', 117, y)
+      doc.text('DATE', 155, y)
       doc.text('Amount', 193, y, { align: 'right' })
       doc.setFont('helvetica', 'normal')
     }
 
-    let y = 87
+    sectionBar('2. EXPENSE LINE ITEMS', 85)
+    let y = 99
     drawTableHeader(y)
     y += 11
-    for (const expense of expenses) {
+    for (const [index, expense] of expenses.entries()) {
       const description = doc.splitTextToSize(expense.description || expense.category, 96)
       const rowHeight = Math.max(9, description.length * 5)
       if (y + rowHeight > 275) {
         doc.addPage()
-        y = 20
+        doc.setTextColor(...brandRed)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(11)
+        doc.text('ACCESS', 14, 12)
+        doc.setTextColor(...brandGreen)
+        doc.text('SURVEILLANCE', 31, 12)
+        doc.setDrawColor(...brandRed)
+        doc.setLineWidth(0.7)
+        doc.line(14, 16, 196, 16)
+        sectionBar('2. EXPENSE LINE ITEMS (CONTINUED)', 20)
+        y = 34
         drawTableHeader(y)
         y += 11
       }
 
+      if (index % 2 === 1) {
+        doc.setFillColor(248, 250, 248)
+        doc.rect(14, y - 5, 182, rowHeight + 1, 'F')
+      }
+      doc.setDrawColor(...line)
+      doc.rect(14, y - 5, 182, rowHeight + 1, 'S')
+      doc.line(112, y - 5, 112, y + rowHeight - 4)
+      doc.line(151, y - 5, 151, y + rowHeight - 4)
+      doc.line(174, y - 5, 174, y + rowHeight - 4)
       doc.setFontSize(9)
+      doc.setTextColor(...ink)
       doc.text(description, 17, y)
-      doc.text(doc.splitTextToSize(expense.category, 32), 119, y)
-      doc.text(expense.expenseDate, 157, y)
+      doc.text(doc.splitTextToSize(expense.category, 34), 115, y)
+      doc.text(expense.expenseDate, 154, y)
       doc.text(formatCurrency(expense.amount), 193, y, { align: 'right' })
       y += rowHeight
-      doc.setDrawColor(226, 232, 240)
-      doc.line(14, y - 2, 196, y - 2)
-      y += 5
+      y += 6
     }
 
     if (y + 22 > 280) {
       doc.addPage()
       y = 24
     }
-    doc.setDrawColor(16, 27, 43)
-    doc.line(120, y, 196, y)
+    doc.setFillColor(...brandGreen)
+    doc.rect(112, y, 84, 11, 'F')
+    doc.setTextColor(255, 255, 255)
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(12)
-    doc.text('Total job expenses', 120, y + 8)
-    doc.text(formatCurrency(total), 193, y + 8, { align: 'right' })
+    doc.setFontSize(10)
+    doc.text('TOTAL EXPENSES', 116, y + 7)
+    doc.text(formatCurrency(total), 192, y + 7, { align: 'right' })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.setTextColor(100, 116, 139)
-    doc.text('Expense summary only; this document is not a tax invoice.', 14, 286)
+    const footerY = Math.min(y + 21, 286)
+    doc.setDrawColor(...brandRed)
+    doc.setLineWidth(0.8)
+    doc.line(14, footerY - 5, 196, footerY - 5)
+    doc.text('Expense summary provided for review only. This document is not a tax invoice.', 105, footerY, { align: 'center' })
+    for (let page = 1; page <= doc.getNumberOfPages(); page += 1) {
+      doc.setPage(page)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7)
+      doc.setTextColor(130, 139, 133)
+      doc.text(`${job.jobReference}  ·  Page ${page} of ${doc.getNumberOfPages()}`, 196, 291, { align: 'right' })
+    }
 
     const safeReference = job.jobReference.replace(/[^a-zA-Z0-9-]/g, '-')
     doc.save(`${safeReference}-expense-summary.pdf`)
   }
 
   return (
-    <section className="dashboard-info-card space-y-4 rounded-xl border border-slate-200 bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="dashboard-info-card overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="border-b-2 border-[#B91F26] px-4 py-6 text-center sm:px-6">
+        <img src={accessSurveillanceLogo} alt="Access Surveillance — Electronic Security Specialists" className="mx-auto h-auto w-full max-w-[330px] object-contain" />
+        <h3 className="mt-3 text-lg font-bold tracking-[0.12em] text-[#272F33] sm:text-xl">CLIENT EXPENSE SUMMARY</h3>
+        {(appState.companySettings.phone || appState.companySettings.email) && (
+          <p className="mt-1 text-sm text-slate-500">
+            {[appState.companySettings.phone, appState.companySettings.email].filter(Boolean).join('  ·  ')}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-6">
         <div>
-          <h3 className="font-semibold text-slate-900">Job expense summary</h3>
-          <p className="text-sm text-slate-500">{job.jobReference} · {job.customer}</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Prepared for</p>
+          <p className="mt-1 font-semibold text-[#272F33]">{job.customer || 'Client'} <span className="px-1 text-slate-300">·</span> {job.jobReference}</p>
         </div>
-        <button type="button" disabled={!expenses.length} onClick={downloadPdf} className="rounded-xl bg-[#163F2F] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">Download client PDF</button>
+        <button type="button" disabled={!expenses.length} onClick={downloadPdf} className="rounded-lg bg-[#258348] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1D6D3B] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#258348] disabled:cursor-not-allowed disabled:opacity-50">Download client PDF</button>
       </div>
       {expenses.length ? (
-        <>
-          <div className="overflow-x-auto">
+        <div className="px-4 pb-5 pt-5 sm:px-6">
+          <div className="mb-2 flex items-center justify-between">
+            <h4 className="text-xs font-bold uppercase tracking-[0.12em] text-[#258348]">Client & job details</h4>
+            <span className="text-xs text-slate-500">Prepared {format(new Date(), 'dd MMM yyyy')}</span>
+          </div>
+          <div className="grid overflow-hidden rounded-lg border border-[#CAD8CE] bg-white text-sm sm:grid-cols-2">
+            <div className="border-b border-[#CAD8CE] p-3 sm:border-r"><span className="text-xs text-slate-500">Client / company</span><p className="mt-1 font-semibold text-[#272F33]">{job.customer || 'Not specified'}</p></div>
+            <div className="border-b border-[#CAD8CE] p-3"><span className="text-xs text-slate-500">Job card number</span><p className="mt-1 font-semibold text-[#272F33]">{job.jobReference}</p></div>
+            <div className="p-3 sm:border-r"><span className="text-xs text-slate-500">Site address</span><p className="mt-1 font-semibold text-[#272F33]">{job.siteAddress || 'Not specified'}</p></div>
+            <div className="border-t border-[#CAD8CE] p-3 sm:border-t-0"><span className="text-xs text-slate-500">Expense items</span><p className="mt-1 font-semibold text-[#272F33]">{expenses.length} line{expenses.length === 1 ? '' : 's'}</p></div>
+          </div>
+          <div className="mb-2 mt-6 flex items-end justify-between gap-3">
+            <h4 className="text-xs font-bold uppercase tracking-[0.12em] text-[#258348]">Expense line items</h4>
+            <span className="text-xs text-slate-500">{expenses.length} item{expenses.length === 1 ? '' : 's'}</span>
+          </div>
+          <div className="overflow-hidden rounded-lg border border-[#CAD8CE]">
+            <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-slate-200 text-slate-500">
+              <thead className="bg-[#E8EFEA] text-[#272F33]">
                 <tr>
-                  <th className="py-2 pr-4 font-medium">Item / description</th>
-                  <th className="py-2 pr-4 font-medium">Category</th>
-                  <th className="py-2 pr-4 font-medium">Date</th>
-                  <th className="py-2 text-right font-medium">Amount</th>
+                  <th className="whitespace-nowrap border-b border-[#CAD8CE] px-4 py-3 font-semibold">Item / description</th>
+                  <th className="whitespace-nowrap border-b border-[#CAD8CE] px-4 py-3 font-semibold">Category</th>
+                  <th className="whitespace-nowrap border-b border-[#CAD8CE] px-4 py-3 font-semibold">Date</th>
+                  <th className="whitespace-nowrap border-b border-[#CAD8CE] px-4 py-3 text-right font-semibold">Amount</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="text-[#272F33]">
                 {expenses.map((expense) => (
-                  <tr key={expense.id} className="border-b border-slate-100 last:border-0">
-                    <td className="py-3 pr-4">{expense.description || expense.category}</td>
-                    <td className="py-3 pr-4">{expense.category}</td>
-                    <td className="py-3 pr-4">{expense.expenseDate}</td>
-                    <td className="py-3 text-right font-medium">{formatCurrency(expense.amount)}</td>
+                  <tr key={expense.id} className="odd:bg-white even:bg-[#F8FAF8]">
+                    <td className="max-w-sm border-b border-[#CAD8CE] px-4 py-3.5">{expense.description || expense.category}</td>
+                    <td className="whitespace-nowrap border-b border-[#CAD8CE] px-4 py-3.5">{expense.category}</td>
+                    <td className="whitespace-nowrap border-b border-[#CAD8CE] px-4 py-3.5">{format(new Date(`${expense.expenseDate}T00:00:00`), 'dd MMM yyyy')}</td>
+                    <td className="whitespace-nowrap border-b border-[#CAD8CE] px-4 py-3.5 text-right font-semibold">{formatCurrency(expense.amount)}</td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot className="border-t border-slate-200">
+              <tfoot className="bg-[#258348] text-white">
                 <tr>
-                  <th colSpan={3} className="py-3 pr-4 text-right font-semibold text-slate-900">Total job expenses</th>
-                  <th className="py-3 text-right font-semibold text-slate-900">{formatCurrency(total)}</th>
+                  <th colSpan={3} className="px-3 py-3 text-right font-bold">TOTAL EXPENSES</th>
+                  <th className="px-3 py-3 text-right font-bold">{formatCurrency(total)}</th>
                 </tr>
               </tfoot>
             </table>
           </div>
-          <p className="text-xs text-slate-500">This expense summary is provided for review and is not a tax invoice.</p>
-        </>
-      ) : <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-500">No expense items have been recorded for this job.</p>}
+          </div>
+          <p className="mt-5 border-t border-[#B91F26] pt-3 text-center text-xs leading-relaxed text-slate-500">This expense summary is provided for review and is not a tax invoice.</p>
+        </div>
+      ) : <p className="m-5 rounded-lg border border-[#CAD8CE] bg-[#F8FAF8] p-4 text-sm text-slate-500">No expense items have been recorded for this job.</p>}
     </section>
   )
 }
