@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 170" role="img" aria-labelledby="title">
+  <title id="title">Access Surveillance — Electronic Security Specialists</title>
+  <g fill="none" stroke="#258348" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M56 21h91a15 15 0 0 1 15 15v81a15 15 0 0 1-15 15H56a15 15 0 0 1-15-15V36a15 15 0 0 1 15-15Z" stroke-width="12"/>
+    <path d="m8 57 43-16v54L8 78Zm43 43-12 30" stroke-width="12"/>
+    <circle cx="112" cy="77" r="19" stroke-width="10"/>
+  </g>
+  <text x="184" y="83" fill="#C52B32" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="800" letter-spacing="-4">ACCESS</text>
+  <rect x="184" y="91" width="428" height="34" rx="3" fill="#258348"/>
+  <text x="398" y="117" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" letter-spacing="12" text-anchor="middle">SURVEILLANCE</text>
+  <text x="398" y="157" fill="#B91F26" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="6" text-anchor="middle">ELECTRONIC SECURITY SPECIALISTS</text>
+</svg>

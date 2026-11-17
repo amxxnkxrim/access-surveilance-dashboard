@@ -8,12 +8,12 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import jsPDF from 'jspdf'
 import { getSupabaseProfileFromEmail, isSupabaseConfigured, supabase } from './lib/supabase'
-import accessSurveillanceLogo from './assets/access-surveillance-logo.svg'
 import SupabaseDataManager from './SupabaseDataManager'
 
 const STORAGE_KEY = 'access-surveillance-state-v1'
 const SESSION_KEY = 'access-surveillance-session-v1'
 const REMEMBERED_EMAIL_KEY = 'access-surveillance-remembered-email-v1'
+const accessSurveillanceLogo = '/access-surveillance-logo.svg'
 
 type Role = 'ADMIN' | 'OFFICE_ADMIN' | 'TECHNICIAN'
 type CustomerType = 'Residential' | 'Commercial'

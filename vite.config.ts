@@ -9,7 +9,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'access-surveillance-logo.svg'],
       manifest: {
         name: 'Access Surveillance',
         short_name: 'AccessSurv',
