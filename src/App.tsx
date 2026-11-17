@@ -8,7 +8,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import jsPDF from 'jspdf'
 import { getSupabaseProfileFromEmail, isSupabaseConfigured, supabase } from './lib/supabase'
-import accessSurveillanceLogo from './assets/access-surveillance-logo.png'
+import accessSurveillanceLogo from './assets/access-surveillance-logo.svg'
 import SupabaseDataManager from './SupabaseDataManager'
 
 const STORAGE_KEY = 'access-surveillance-state-v1'
@@ -2412,7 +2412,21 @@ function JobExpenseSheet({ job }: { job: Job }) {
     try {
       const logoResponse = await fetch(accessSurveillanceLogo)
       if (!logoResponse.ok) throw new Error('Logo asset could not be loaded.')
-      logoData = `data:image/png;base64,${await readBlobAsBase64(await logoResponse.blob())}`
+      const svgImage = new Image()
+      const svgObjectUrl = URL.createObjectURL(await logoResponse.blob())
+      try {
+        svgImage.src = svgObjectUrl
+        await svgImage.decode()
+        const canvas = document.createElement('canvas')
+        canvas.width = 1320
+        canvas.height = 340
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('Logo image could not be rendered.')
+        context.drawImage(svgImage, 0, 0, canvas.width, canvas.height)
+        logoData = canvas.toDataURL('image/png')
+      } finally {
+        URL.revokeObjectURL(svgObjectUrl)
+      }
     } catch (error) {
       window.alert(`Could not prepare the client PDF: ${error instanceof Error ? error.message : 'Logo asset could not be loaded.'}`)
       return
@@ -2556,7 +2570,7 @@ function JobExpenseSheet({ job }: { job: Job }) {
   return (
     <section className="dashboard-info-card overflow-hidden rounded-xl border border-slate-200 bg-white">
       <div className="border-b-2 border-[#B91F26] px-4 py-6 text-center sm:px-6">
-        <img src={accessSurveillanceLogo} alt="Access Surveillance — Electronic Security Specialists" className="mx-auto h-auto w-full max-w-[330px] object-contain" />
+        <img src={accessSurveillanceLogo} alt="Access Surveillance — Electronic Security Specialists" className="mx-auto h-auto w-full max-w-[390px] object-contain" />
         <h3 className="mt-3 text-lg font-bold tracking-[0.12em] text-[#272F33] sm:text-xl">CLIENT EXPENSE SUMMARY</h3>
         {(appState.companySettings.phone || appState.companySettings.email) && (
           <p className="mt-1 text-sm text-slate-500">
