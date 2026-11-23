@@ -1931,9 +1931,43 @@ function EquipmentPage() {
   const navigate = useNavigate()
   const selectedEquipmentId = new URLSearchParams(location.search).get('equipmentId')
   const [creating, setCreating] = useState(false)
+  const [draggedEquipmentId, setDraggedEquipmentId] = useState('')
+  const [assignmentError, setAssignmentError] = useState('')
+  const [assignmentSuccess, setAssignmentSuccess] = useState('')
   const customerOptions = [{ value: '', label: 'No customer selected' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
   const technicianOptions = [{ value: '', label: 'Unassigned' }, ...appState.users.map((user) => ({ value: user.id, label: user.name }))]
   const jobOptions = appState.jobs.map((job) => ({ value: job.id, label: `${job.jobReference} — ${job.customer}` }))
+
+  const assignEquipmentToJob = async (equipmentId: string, jobId: string) => {
+    setAssignmentError('')
+    setAssignmentSuccess('')
+    if (!equipmentId) return
+
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('equipment')
+        .update({ associated_job_id: jobId || null })
+        .eq('id', equipmentId)
+        .select('id')
+        .maybeSingle()
+      if (error) throw new Error(error.message)
+      if (!data) throw new Error('The equipment assignment could not be saved.')
+      if (!await refreshData()) throw new Error('The assignment was saved, but the latest records could not be reloaded.')
+    } else {
+      updateState((current) => ({
+        ...current,
+        equipment: current.equipment.map((item) =>
+          item.id === equipmentId ? { ...item, associatedJobId: jobId || undefined } : item,
+        ),
+      }))
+    }
+
+    const equipment = appState.equipment.find((item) => item.id === equipmentId)
+    const job = appState.jobs.find((item) => item.id === jobId)
+    setAssignmentSuccess(job
+      ? `${equipment?.model || 'Equipment'} assigned to ${job.jobReference}.`
+      : `${equipment?.model || 'Equipment'} moved to unassigned.`)
+  }
 
   const saveEquipment = async (values: Record<string, string>) => {
     const equipmentId = values.equipmentId.trim() || createReference('AS-EQ')
@@ -1985,6 +2019,84 @@ function EquipmentPage() {
   return (
     <div className="space-y-6">
       <SectionToolbar title="Equipment register" buttonLabel="Add equipment" onAction={() => setCreating(true)} />
+      <Panel title="Drag equipment between jobs" action={`${appState.equipment.length} equipment items`}>
+        {assignmentError && <p role="alert" className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{assignmentError}</p>}
+        {assignmentSuccess && <p role="status" className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{assignmentSuccess}</p>}
+        <p className="mb-4 text-sm text-slate-500">Drag an equipment card and drop it into a job. You can also use the dropdown on each card.</p>
+        <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+          <div
+            className="min-h-40 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-3"
+            onDragOver={(event) => {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'move'
+            }}
+            onDrop={(event) => {
+              event.preventDefault()
+              const equipmentId = event.dataTransfer.getData('application/x-equipment-id') || draggedEquipmentId
+              void assignEquipmentToJob(equipmentId, '').catch((error) => setAssignmentError(error instanceof Error ? error.message : 'Could not unassign equipment.'))
+              setDraggedEquipmentId('')
+            }}
+          >
+            <h3 className="mb-3 text-sm font-semibold text-slate-800">Unassigned equipment</h3>
+            <div className="space-y-2">
+              {appState.equipment.filter((item) => !item.associatedJobId).map((item) => (
+                <EquipmentDragCard
+                  key={item.id}
+                  item={item}
+                  jobOptions={jobOptions}
+                  onDragStart={() => setDraggedEquipmentId(item.id)}
+                  onDragEnd={() => setDraggedEquipmentId('')}
+                  onAssign={(jobId) => {
+                    void assignEquipmentToJob(item.id, jobId).catch((error) => setAssignmentError(error instanceof Error ? error.message : 'Could not assign equipment.'))
+                  }}
+                />
+              ))}
+              {appState.equipment.filter((item) => !item.associatedJobId).length === 0 && (
+                <p className="rounded-lg border border-slate-200 bg-white px-3 py-4 text-center text-xs text-slate-500">All equipment is assigned</p>
+              )}
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            {appState.jobs.map((job) => {
+              const assigned = appState.equipment.filter((item) => item.associatedJobId === job.id)
+              return (
+                <div
+                  key={job.id}
+                  className="min-h-40 rounded-xl border-2 border-dashed border-emerald-300 bg-emerald-50/40 p-3"
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    const equipmentId = event.dataTransfer.getData('application/x-equipment-id') || draggedEquipmentId
+                    void assignEquipmentToJob(equipmentId, job.id).catch((error) => setAssignmentError(error instanceof Error ? error.message : 'Could not assign equipment.'))
+                    setDraggedEquipmentId('')
+                  }}
+                >
+                  <h3 className="text-sm font-semibold text-slate-900">{job.jobReference}</h3>
+                  <p className="mb-3 text-xs text-slate-500">{job.customer || 'No customer'} · {assigned.length} items</p>
+                  <div className="space-y-2">
+                    {assigned.map((item) => (
+                      <EquipmentDragCard
+                        key={item.id}
+                        item={item}
+                        jobOptions={jobOptions}
+                        onDragStart={() => setDraggedEquipmentId(item.id)}
+                        onDragEnd={() => setDraggedEquipmentId('')}
+                        onAssign={(jobId) => {
+                          void assignEquipmentToJob(item.id, jobId).catch((error) => setAssignmentError(error instanceof Error ? error.message : 'Could not assign equipment.'))
+                        }}
+                      />
+                    ))}
+                    {assigned.length === 0 && <p className="rounded-lg border border-dashed border-emerald-200 bg-white px-3 py-4 text-center text-xs text-slate-400">Drop equipment here</p>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </Panel>
       <Panel title="Installed assets" action={`${selectedEquipmentId ? appState.equipment.filter((item) => item.id === selectedEquipmentId).length : appState.equipment.length} items`}>
         {selectedEquipmentId && (
           <button type="button" className="mb-3 text-sm font-medium text-[#163F2F]" onClick={() => navigate('/equipment')}>Show all equipment</button>
@@ -2674,6 +2786,148 @@ function JobExpenseSheet({ job }: { job: Job }) {
   )
 }
 
+function JobEquipmentManager({
+  job,
+  equipment,
+  updateState,
+  refreshData,
+}: {
+  job: Job
+  equipment: Equipment[]
+  updateState: (updater: (current: AppState) => AppState) => void
+  refreshData: () => Promise<boolean>
+}) {
+  const [search, setSearch] = useState('')
+  const [category, setCategory] = useState('')
+  const [selectedEquipmentId, setSelectedEquipmentId] = useState('')
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  const assigned = equipment.filter((item) => item.associatedJobId === job.id)
+  const categories = Array.from(new Set(equipment.map((item) => item.category).filter(Boolean))).sort()
+  const available = equipment.filter((item) => {
+    const matchesCategory = !category || item.category === category
+    const query = search.trim().toLowerCase()
+    const matchesSearch = !query || [
+      item.equipmentId,
+      item.category,
+      item.manufacturer,
+      item.model,
+      item.serialNumber,
+    ].some((value) => value.toLowerCase().includes(query))
+    return matchesCategory && matchesSearch
+  })
+
+  const assignEquipment = async (equipmentId: string) => {
+    if (!equipmentId) return
+    setError('')
+    setSuccess('')
+    try {
+      if (isSupabaseConfigured && supabase) {
+        const { data, error: saveError } = await supabase
+          .from('equipment')
+          .update({ associated_job_id: job.id })
+          .eq('id', equipmentId)
+          .select('id')
+          .maybeSingle()
+        if (saveError) throw new Error(saveError.message)
+        if (!data) throw new Error('The equipment assignment could not be saved.')
+        if (!await refreshData()) throw new Error('The assignment was saved, but the latest records could not be reloaded.')
+      } else {
+        updateState((current) => ({
+          ...current,
+          equipment: current.equipment.map((item) =>
+            item.id === equipmentId ? { ...item, associatedJobId: job.id } : item,
+          ),
+        }))
+      }
+      const item = equipment.find((entry) => entry.id === equipmentId)
+      setSuccess(`${item?.model || 'Equipment'} added to ${job.jobReference}.`)
+      setSelectedEquipmentId('')
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not add equipment.')
+    }
+  }
+
+  const removeEquipment = async (equipmentId: string) => {
+    setError('')
+    setSuccess('')
+    try {
+      if (isSupabaseConfigured && supabase) {
+        const { error: saveError } = await supabase
+          .from('equipment')
+          .update({ associated_job_id: null })
+          .eq('id', equipmentId)
+        if (saveError) throw new Error(saveError.message)
+        if (!await refreshData()) throw new Error('Equipment was removed, but the latest records could not be reloaded.')
+      } else {
+        updateState((current) => ({
+          ...current,
+          equipment: current.equipment.map((item) =>
+            item.id === equipmentId ? { ...item, associatedJobId: undefined } : item,
+          ),
+        }))
+      }
+      setSuccess('Equipment removed from this job.')
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not remove equipment.')
+    }
+  }
+
+  return (
+    <section className="job-detail-section">
+      <h3 className="job-section-title">Job equipment ({assigned.length})</h3>
+      {error && <p role="alert" className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {success && <p role="status" className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</p>}
+      <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <p className="mb-3 text-sm font-medium text-slate-800">Add equipment to this job</p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Search equipment</span>
+            <input value={search} onChange={(event) => setSearch(event.target.value)} className="input w-full" placeholder="Search model, serial, or reference" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Category</span>
+            <select value={category} onChange={(event) => setCategory(event.target.value)} className="input w-full">
+              <option value="">All categories</option>
+              {categories.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+        </div>
+        <label className="mt-3 block">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Equipment</span>
+          <select value={selectedEquipmentId} onChange={(event) => setSelectedEquipmentId(event.target.value)} className="input w-full">
+            <option value="">Select equipment</option>
+            {available.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.manufacturer ? `${item.manufacturer} ` : ''}{item.model} · {item.category} · {item.equipmentId}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" disabled={!selectedEquipmentId} onClick={() => void assignEquipment(selectedEquipmentId)} className="mt-3 rounded-lg bg-[#163F2F] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">Add to job</button>
+      </div>
+      {assigned.length ? (
+        <div className="job-equipment-list">
+          {assigned.map((item) => (
+            <div key={item.id} className="job-equipment-card text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-slate-900">{item.manufacturer} {item.model} · {item.category}</p>
+                  <p className="job-equipment-meta">Ref {item.equipmentId} · Serial {item.serialNumber || 'not set'} · Qty {item.quantity}</p>
+                  <p className="job-equipment-meta">Installed {item.installationDate || 'not set'} · Warranty {item.warrantyExpiry || 'not set'} · {item.condition} · {item.status}</p>
+                  {item.notes && <p className="job-equipment-meta">{item.notes}</p>}
+                </div>
+                <button type="button" onClick={() => void removeEquipment(item.id)} className="shrink-0 text-xs font-medium text-red-600 hover:underline">Remove</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : <p className="mt-2 text-sm text-slate-500">No equipment is linked to this job.</p>}
+    </section>
+  )
+}
+
 function JobsPage() {
   const { appState, session, refreshData, updateState } = useAppContext()
   const location = useLocation()
@@ -2686,13 +2940,26 @@ function JobsPage() {
   const customerOptions = [{ value: '', label: 'Select customer' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
   const technicianOptions = [{ value: '', label: 'Unassigned' }, ...appState.users.map((user) => ({ value: user.id, label: user.name }))]
   const activeStatuses: JobStatus[] = ['New', 'Awaiting quotation', 'Quotation sent', 'Approved', 'Scheduled', 'In progress', 'Awaiting parts']
-  const jobsToShow = dateFilter
-    ? appState.jobs.filter((job) => job.createdDate === dateFilter)
-    : statusFilter === 'active'
-      ? appState.jobs.filter((job) => activeStatuses.includes(job.status))
-      : statusFilter
-        ? appState.jobs.filter((job) => job.status === statusFilter)
-        : appState.jobs
+  const jobsToShow = expandedJobId
+    ? appState.jobs.filter((job) => job.id === expandedJobId)
+    : dateFilter
+      ? appState.jobs.filter((job) => job.createdDate === dateFilter)
+      : statusFilter === 'active'
+        ? appState.jobs.filter((job) => activeStatuses.includes(job.status))
+        : statusFilter
+          ? appState.jobs.filter((job) => job.status === statusFilter)
+          : appState.jobs
+
+  useEffect(() => {
+    if (!expandedJobId) return
+    const frame = window.requestAnimationFrame(() => {
+      document.querySelector(`[data-job-id="${CSS.escape(expandedJobId)}"]`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [expandedJobId])
 
   const saveJob = async (values: Record<string, string>) => {
     const jobReference = createReference('AS-J')
@@ -2761,18 +3028,25 @@ function JobsPage() {
           {dateFilter && <button type="button" className="text-sm font-medium text-[#163F2F]" onClick={() => navigate('/jobs')}>Show all jobs</button>}
         </div>
         {dateFilter && <p className="mb-4 text-sm text-slate-600">Showing jobs recorded on {dateFilter}.</p>}
+        {expandedJobId && jobsToShow[0] && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#CAD8CE] bg-[#EDF3EC] px-4 py-3">
+            <p className="text-sm text-slate-700">
+              Showing selected job <strong className="text-slate-900">{jobsToShow[0].jobReference}</strong>
+            </p>
+            <button type="button" className="text-sm font-medium text-[#163F2F] hover:underline" onClick={() => navigate(dateFilter ? `/jobs?date=${encodeURIComponent(dateFilter)}` : '/jobs')}>
+              Show all jobs
+            </button>
+          </div>
+        )}
         <div className="grid gap-4 lg:grid-cols-2">
           {jobsToShow.map((job) => {
             const customer = appState.customers.find((item) => item.fullName === job.customer)
-            const jobEquipment = appState.equipment.filter((item) =>
-              item.associatedJobId === job.id
-              || (!item.associatedJobId && (item.customerId === customer?.id || item.customerId === customer?.customerId)),
-            )
             const isExpanded = expandedJobId === job.id
 
             return (
             <div
               key={job.id}
+              data-job-id={job.id}
               className="dashboard-info-card job-summary-card rounded-2xl border border-slate-200 bg-slate-50 p-4"
               onDragOver={(event) => {
                 event.preventDefault()
@@ -2842,36 +3116,12 @@ function JobsPage() {
                       <div className="job-info-item job-info-item-wide"><span>Internal notes</span><strong>{job.internalNotes || 'None'}</strong></div>
                     </div>
                   </section>
-                  <section className="job-detail-section">
-                    <h3 className="job-section-title">Customer equipment ({jobEquipment.length})</h3>
-                    {jobEquipment.length ? (
-                      <div className="job-equipment-list">
-                        {jobEquipment.map((item) => (
-                          <div
-                            key={item.id}
-                            className="job-equipment-card text-sm cursor-move"
-                            draggable
-                            onDragStart={(event) => {
-                              event.dataTransfer.effectAllowed = 'move'
-                              event.dataTransfer.setData('application/x-equipment-id', item.id)
-                            }}
-                          >
-                            <p className="font-semibold text-slate-900">{item.manufacturer} {item.model} · {item.category}</p>
-                            <p className="job-equipment-meta">
-                              Ref {item.equipmentId} · Serial {item.serialNumber || 'not set'} · Qty {item.quantity}
-                            </p>
-                            <p className="job-equipment-meta">
-                              Installed {item.installationDate || 'not set'} · Warranty {item.warrantyExpiry || 'not set'} · {item.condition} · {item.status}
-                            </p>
-                            <p className="job-equipment-meta">
-                              {item.installationAddress || 'Address not set'}{item.technician ? ` · ${item.technician}` : ''}
-                            </p>
-                            {item.notes && <p className="job-equipment-meta">{item.notes}</p>}
-                          </div>
-                        ))}
-                      </div>
-                    ) : <p className="mt-2 text-sm text-slate-500">No equipment records are linked to this customer.</p>}
-                  </section>
+                  <JobEquipmentManager
+                    job={job}
+                    equipment={appState.equipment}
+                    updateState={updateState}
+                    refreshData={refreshData}
+                  />
                 </div>
               )}
               {isExpanded && session && ['ADMIN', 'OFFICE_ADMIN'].includes(session.role) && <JobExpenseSheet key={job.id} job={job} />}
@@ -4211,6 +4461,46 @@ function SectionToolbar({ title, buttonLabel, onAction }: { title: string; butto
           {buttonLabel}
         </button>
       )}
+    </div>
+  )
+}
+
+function EquipmentDragCard({
+  item,
+  jobOptions,
+  onDragStart,
+  onDragEnd,
+  onAssign,
+}: {
+  item: Equipment
+  jobOptions: Array<{ value: string; label: string }>
+  onDragStart: () => void
+  onDragEnd: () => void
+  onAssign: (jobId: string) => void
+}) {
+  return (
+    <div
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('application/x-equipment-id', item.id)
+        onDragStart()
+      }}
+      onDragEnd={onDragEnd}
+      className="cursor-grab rounded-lg border border-slate-200 bg-white p-3 shadow-sm active:cursor-grabbing"
+    >
+      <p className="font-medium text-slate-900">{item.manufacturer ? `${item.manufacturer} ` : ''}{item.model}</p>
+      <p className="mb-2 text-xs text-slate-500">{item.equipmentId} · Qty {item.quantity}</p>
+      <select
+        value={item.associatedJobId ?? ''}
+        onChange={(event) => onAssign(event.target.value)}
+        onPointerDown={(event) => event.stopPropagation()}
+        className="input w-full text-xs"
+        aria-label={`Assign ${item.model} to job`}
+      >
+        <option value="">Unassigned</option>
+        {jobOptions.map((job) => <option key={job.value} value={job.value}>{job.label}</option>)}
+      </select>
     </div>
   )
 }
