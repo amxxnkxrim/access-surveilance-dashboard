@@ -3011,9 +3011,20 @@ function JobsPage() {
 
   return (
     <div className="space-y-6">
-      <SectionToolbar title="Job management" buttonLabel="Create job" onAction={() => setCreating(true)} />
-      <p className="text-sm text-slate-500">Select a job reference to view its details and read-only expense summary.</p>
-      <Panel title="Live jobs" action={`${jobsToShow.length} records`}>
+      {expandedJobId ? (
+        <SectionToolbar
+          title={jobsToShow[0] ? `Job ${jobsToShow[0].jobReference}` : 'Selected job'}
+          buttonLabel="Show all jobs"
+          onAction={() => navigate('/jobs')}
+        />
+      ) : (
+        <>
+          <SectionToolbar title="Job management" buttonLabel="Create job" onAction={() => setCreating(true)} />
+          <p className="text-sm text-slate-500">Select a job reference to view its details and read-only expense summary.</p>
+        </>
+      )}
+      <Panel title={expandedJobId ? 'Selected job details' : 'Live jobs'} action={`${jobsToShow.length} records`}>
+        {!expandedJobId && (
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <label htmlFor="job-date-filter" className="mb-1 block text-xs font-medium text-slate-600">Find jobs recorded on a date</label>
@@ -3027,18 +3038,9 @@ function JobsPage() {
           </div>
           {dateFilter && <button type="button" className="text-sm font-medium text-[#163F2F]" onClick={() => navigate('/jobs')}>Show all jobs</button>}
         </div>
-        {dateFilter && <p className="mb-4 text-sm text-slate-600">Showing jobs recorded on {dateFilter}.</p>}
-        {expandedJobId && jobsToShow[0] && (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#CAD8CE] bg-[#EDF3EC] px-4 py-3">
-            <p className="text-sm text-slate-700">
-              Showing selected job <strong className="text-slate-900">{jobsToShow[0].jobReference}</strong>
-            </p>
-            <button type="button" className="text-sm font-medium text-[#163F2F] hover:underline" onClick={() => navigate(dateFilter ? `/jobs?date=${encodeURIComponent(dateFilter)}` : '/jobs')}>
-              Show all jobs
-            </button>
-          </div>
         )}
-        <div className="grid gap-4 lg:grid-cols-2">
+        {!expandedJobId && dateFilter && <p className="mb-4 text-sm text-slate-600">Showing jobs recorded on {dateFilter}.</p>}
+        <div className={expandedJobId ? 'max-w-5xl' : 'grid gap-4 lg:grid-cols-2'}>
           {jobsToShow.map((job) => {
             const customer = appState.customers.find((item) => item.fullName === job.customer)
             const isExpanded = expandedJobId === job.id
