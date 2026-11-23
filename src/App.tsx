@@ -1,5 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Bell, Building2, CalendarDays, CheckCircle2, CircleDollarSign, ClipboardList, CreditCard, Database, FileText, Gauge, LayoutDashboard, LogOut, Menu, Plus, Search, Settings, ShieldCheck, UserCog, Users, Wrench, X } from 'lucide-react'
@@ -1073,6 +1073,7 @@ function AppShell() {
         <Route path="/customers/new" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><CustomersPage /></RoleGuard>} />
         <Route path="/equipment" element={<EquipmentPage />} />
         <Route path="/jobs" element={<JobsPage />} />
+        <Route path="/jobs/:jobId" element={<JobsPage />} />
         <Route path="/quotations" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><QuotationsPage /></RoleGuard>} />
         <Route path="/maintenance" element={<MaintenancePage />} />
         <Route path="/invoices" element={<RoleGuard roles={['ADMIN', 'OFFICE_ADMIN']}><InvoicesPage /></RoleGuard>} />
@@ -1136,7 +1137,7 @@ function AppLayout() {
         label: job.jobReference,
         detail: `${job.customer} · Created ${job.createdDate || 'date not recorded'}`,
         kind: 'Job' as const,
-        path: `/jobs?jobId=${encodeURIComponent(job.id)}`,
+        path: `/jobs/${encodeURIComponent(job.id)}`,
       }))
     const equipment = appState.equipment
       .filter((item) => [item.equipmentId, item.model, item.manufacturer, item.category, item.serialNumber].some((value) => value.toLocaleLowerCase().includes(query)))
@@ -1866,7 +1867,7 @@ function CustomersPage() {
                                   <button
                                     key={job.id}
                                     type="button"
-                                    onClick={() => navigate(`/jobs?jobId=${encodeURIComponent(job.id)}`)}
+                                    onClick={() => navigate(`/jobs/${encodeURIComponent(job.id)}`)}
                                     className="flex w-full items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-[#2C8D58]"
                                   >
                                     <span>
@@ -2932,9 +2933,10 @@ function JobsPage() {
   const { appState, session, refreshData, updateState } = useAppContext()
   const location = useLocation()
   const navigate = useNavigate()
+  const { jobId: routeJobId } = useParams<{ jobId: string }>()
   const searchParams = new URLSearchParams(location.search)
   const dateFilter = searchParams.get('date') ?? ''
-  const expandedJobId = searchParams.get('jobId')
+  const expandedJobId = routeJobId ?? searchParams.get('jobId') ?? ''
   const statusFilter = searchParams.get('status') ?? ''
   const [creating, setCreating] = useState(false)
   const customerOptions = [{ value: '', label: 'Select customer' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
@@ -3081,9 +3083,9 @@ function JobsPage() {
                     className="job-reference font-semibold text-slate-900 hover:text-[#B91F26]"
                     onClick={() => {
                       if (dateFilter) {
-                        navigate(isExpanded ? `/jobs?date=${encodeURIComponent(dateFilter)}` : `/jobs?date=${encodeURIComponent(dateFilter)}&jobId=${encodeURIComponent(job.id)}`, { replace: true })
+                        navigate(isExpanded ? `/jobs?date=${encodeURIComponent(dateFilter)}` : `/jobs/${encodeURIComponent(job.id)}`, { replace: true })
                       } else if (!isExpanded) {
-                        navigate(`/jobs?jobId=${encodeURIComponent(job.id)}`, { replace: true })
+                        navigate(`/jobs/${encodeURIComponent(job.id)}`, { replace: true })
                       } else {
                         navigate('/jobs', { replace: true })
                       }
