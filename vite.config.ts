@@ -10,6 +10,12 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'access-surveillance-logo.svg'],
+      workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
+        navigateFallback: '/index.html',
+      },
       manifest: {
         name: 'Access Surveillance',
         short_name: 'AccessSurv',
