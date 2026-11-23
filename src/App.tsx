@@ -1867,7 +1867,7 @@ function CustomersPage() {
                                   <button
                                     key={job.id}
                                     type="button"
-                                    onClick={() => navigate(`/jobs/${encodeURIComponent(job.id)}`)}
+                                    onClick={() => navigate(`/jobs/${encodeURIComponent(job.id)}`, { state: { selectedJobId: job.id } })}
                                     className="flex w-full items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-[#2C8D58]"
                                   >
                                     <span>
@@ -2936,7 +2936,8 @@ function JobsPage() {
   const { jobId: routeJobId } = useParams<{ jobId: string }>()
   const searchParams = new URLSearchParams(location.search)
   const dateFilter = searchParams.get('date') ?? ''
-  const expandedJobId = routeJobId ?? searchParams.get('jobId') ?? ''
+  const navigationState = location.state as { selectedJobId?: string } | null
+  const expandedJobId = routeJobId ?? navigationState?.selectedJobId ?? searchParams.get('jobId') ?? ''
   const statusFilter = searchParams.get('status') ?? ''
   const [creating, setCreating] = useState(false)
   const customerOptions = [{ value: '', label: 'Select customer' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
