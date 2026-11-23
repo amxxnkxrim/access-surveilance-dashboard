@@ -4,6 +4,8 @@ create table if not exists public.job_expenses (
     expense_date date not null default current_date,
     category text not null,
     description text,
+    subtotal numeric(12,2) not null default 0,
+    vat numeric(12,2) not null default 0,
     amount numeric(12,2) not null check (amount > 0),
     created_at timestamptz not null default now()
 );

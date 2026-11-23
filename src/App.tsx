@@ -62,6 +62,7 @@ interface Equipment {
   id: string
   equipmentId: string
   customerId: string
+  associatedJobId?: string
   installationAddress: string
   category: string
   manufacturer: string
@@ -164,6 +165,8 @@ interface JobExpense {
   expenseDate: string
   category: ExpenseCategory
   description: string
+  subtotal: number
+  vat: number
   amount: number
 }
 
@@ -173,6 +176,7 @@ interface ExpenseEntryLine {
   itemName: string
   quantity: string
   unitPrice: string
+  vat: string
 }
 
 interface FinancialDocumentExtraction {
@@ -199,6 +203,7 @@ interface FinancialDocumentLineItem {
   quantity: number
   unitPrice: number
   lineTotal: number
+  vat?: number
   expenseCategory: string
   equipmentCategory: string
   manufacturer: string
@@ -651,6 +656,8 @@ const mapJobExpenseRecord = (record: SupabaseRow): JobExpense => ({
   expenseDate: dateField(record, 'expense_date'),
   category: expenseCategories.find((category) => category === stringField(record, 'category')) ?? 'Other',
   description: stringField(record, 'description'),
+  subtotal: numberField(record, 'subtotal'),
+  vat: numberField(record, 'vat'),
   amount: numberField(record, 'amount'),
 })
 
@@ -789,6 +796,7 @@ const mapSupabaseAppState = (tables: Record<string, unknown>): AppState => {
       id: stringField(row, 'id'),
       equipmentId: stringField(row, 'equipment_id'),
       customerId: customerById.get(stringField(row, 'customer_id'))?.customerId ?? stringField(row, 'customer_id'),
+      associatedJobId: stringField(row, 'associated_job_id') || undefined,
       installationAddress: stringField(row, 'installation_address'),
       category: stringField(row, 'category'),
       manufacturer: stringField(row, 'manufacturer'),
@@ -1925,6 +1933,7 @@ function EquipmentPage() {
   const [creating, setCreating] = useState(false)
   const customerOptions = [{ value: '', label: 'No customer selected' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
   const technicianOptions = [{ value: '', label: 'Unassigned' }, ...appState.users.map((user) => ({ value: user.id, label: user.name }))]
+  const jobOptions = appState.jobs.map((job) => ({ value: job.id, label: `${job.jobReference} — ${job.customer}` }))
 
   const saveEquipment = async (values: Record<string, string>) => {
     const equipmentId = values.equipmentId.trim() || createReference('AS-EQ')
@@ -2007,6 +2016,7 @@ function EquipmentPage() {
                       recordId={item.id}
                       title="equipment"
                       fields={equipmentEditFields}
+                      jobOptions={jobOptions}
                       initialValues={{
                         equipment_id: item.equipmentId,
                         customer_id: item.customerId,
@@ -2022,7 +2032,7 @@ function EquipmentPage() {
                         status: item.status,
                         technician_id: item.technician,
                         notes: item.notes,
-                        associated_job_id: '',
+                        associated_job_id: item.associatedJobId ?? '',
                       }}
                       toPayload={(values) => ({
                         equipment_id: values.equipment_id,
@@ -2059,6 +2069,7 @@ function EquipmentPage() {
                           status: values.status,
                           technician: values.technician_id,
                           notes: values.notes,
+                          associatedJobId: values.associated_job_id || undefined,
                         } : entry),
                       }))}
                       onLocalDelete={() => updateState((current) => ({ ...current, equipment: current.equipment.filter((entry) => entry.id !== item.id) }))}
@@ -2104,6 +2115,7 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
     itemName: '',
     quantity: '1',
     unitPrice: '',
+    vat: '0',
   })
   const [expenseDate, setExpenseDate] = useState(today)
   const [items, setItems] = useState<ExpenseEntryLine[]>([newItem()])
@@ -2119,8 +2131,11 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
   const preparedItems = items.map((item) => {
     const quantity = Number(item.quantity)
     const unitPrice = Number(item.unitPrice)
-    const amount = Math.round(quantity * unitPrice * 100) / 100
-    return { ...item, itemName: item.itemName.trim(), quantity, unitPrice, amount }
+    const vatRate = Math.min(100, Math.max(0, Number(item.vat) || 0))
+    const subtotal = Math.round(quantity * unitPrice * 100) / 100
+    const vatAmount = Math.round(subtotal * vatRate / 100 * 100) / 100
+    const amount = Math.round((subtotal + vatAmount) * 100) / 100
+    return { ...item, itemName: item.itemName.trim(), quantity, unitPrice, vat: String(vatRate), subtotal, vatAmount, amount }
   })
   const isSheetValid = preparedItems.length > 0 && preparedItems.every((item) =>
     item.itemName && Number.isFinite(item.quantity) && item.quantity > 0
@@ -2149,6 +2164,8 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
           expense_date: expenseDate || today,
           category: item.category,
           description: `${item.itemName} (${item.quantity} x ${formatCurrency(item.unitPrice)} each)`,
+          subtotal: item.subtotal,
+          vat: item.vatAmount,
           amount: item.amount,
         }))).select('*')
         if (error) throw new Error(await getEdgeFunctionError(error))
@@ -2164,6 +2181,8 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
           expenseDate: expenseDate || today,
           category: item.category,
           description: `${item.itemName} (${item.quantity} x ${formatCurrency(item.unitPrice)} each)`,
+          subtotal: item.subtotal,
+          vat: item.vatAmount,
           amount: item.amount,
         }))
         updateState((current) => ({ ...current, expenses: [...expenses, ...current.expenses] }))
@@ -2231,15 +2250,24 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
           item.toLocaleLowerCase() === line.expenseCategory.toLocaleLowerCase(),
         ) ?? category
         const quantity = line.quantity > 0 ? line.quantity : 1
-        const unitPrice = line.unitPrice > 0
-          ? line.unitPrice
-          : (line.lineTotal > 0 ? line.lineTotal / quantity : 0)
+        const receiptSubtotal = extraction.subtotal > 0 ? extraction.subtotal : extractedLines.reduce((sum, entry) => sum + (entry.lineTotal > 0 ? entry.lineTotal : 0), 0)
+        const receiptVatRate = receiptSubtotal > 0 && extraction.vat > 0
+          ? Math.round(extraction.vat / receiptSubtotal * 10000) / 100
+          : (extraction.vat > 0 ? 15 : 0)
+        const printedLineTotal = line.lineTotal > 0
+          ? line.lineTotal
+          : (line.unitPrice > 0 ? line.unitPrice * quantity : 0)
+        const lineSubtotal = receiptVatRate > 0
+          ? Math.round(printedLineTotal / (1 + receiptVatRate / 100) * 100) / 100
+          : printedLineTotal
+        const unitPrice = quantity > 0 ? lineSubtotal / quantity : 0
         return {
           id: createReference('expense-line'),
           category: lineCategory,
           itemName: line.itemName,
           quantity: String(quantity),
           unitPrice: String(Math.round(unitPrice * 100) / 100),
+          vat: String(receiptVatRate),
         }
       }))
       if (/^\d{4}-\d{2}-\d{2}$/.test(extraction.documentDate)) setExpenseDate(extraction.documentDate)
@@ -2288,6 +2316,7 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
             status: 'Active',
             technician: job.assignedTechnician,
             notes: `Added from supplier receipt ${extraction.invoiceReference || ''}`.trim(),
+            associatedJobId: job.id,
           }))
           updateState((current) => ({ ...current, equipment: [...equipment, ...current.equipment] }))
         }
@@ -2344,8 +2373,15 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
                   <Field label="Price per item (ZAR)">
                     <input required disabled={isSaved} type="number" min="0.01" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(item.id, { unitPrice: event.target.value })} className="input" />
                   </Field>
+                  <Field label="VAT (%)">
+                    <input required disabled={isSaved} type="number" min="0" max="100" step="0.01" value={item.vat} onChange={(event) => updateItem(item.id, { vat: event.target.value })} className="input" />
+                  </Field>
                 </div>
-                <p className="mt-3 text-right text-sm text-slate-600">Line total: <span className="font-semibold text-slate-900">{formatCurrency(preparedItem.amount > 0 ? preparedItem.amount : 0)}</span></p>
+                <div className="mt-3 flex flex-wrap justify-end gap-5 text-right text-sm text-slate-600">
+                  <p>Subtotal: <span className="font-semibold text-slate-900">{formatCurrency(preparedItem.subtotal > 0 ? preparedItem.subtotal : 0)}</span></p>
+                  <p>VAT: <span className="font-semibold text-slate-900">{formatCurrency(preparedItem.vatAmount > 0 ? preparedItem.vatAmount : 0)}</span></p>
+                  <p>Line total: <span className="font-semibold text-slate-900">{formatCurrency(preparedItem.amount > 0 ? preparedItem.amount : 0)}</span></p>
+                </div>
               </div>
             )
           })}
@@ -2729,12 +2765,38 @@ function JobsPage() {
           {jobsToShow.map((job) => {
             const customer = appState.customers.find((item) => item.fullName === job.customer)
             const jobEquipment = appState.equipment.filter((item) =>
-              item.customerId === customer?.id || item.customerId === customer?.customerId,
+              item.associatedJobId === job.id
+              || (!item.associatedJobId && (item.customerId === customer?.id || item.customerId === customer?.customerId)),
             )
             const isExpanded = expandedJobId === job.id
 
             return (
-            <div key={job.id} className="dashboard-info-card job-summary-card rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div
+              key={job.id}
+              className="dashboard-info-card job-summary-card rounded-2xl border border-slate-200 bg-slate-50 p-4"
+              onDragOver={(event) => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'move'
+              }}
+              onDrop={async (event) => {
+                event.preventDefault()
+                const equipmentId = event.dataTransfer.getData('application/x-equipment-id')
+                if (!equipmentId) return
+                if (isSupabaseConfigured && supabase) {
+                  const { error } = await supabase.from('equipment').update({ associated_job_id: job.id }).eq('id', equipmentId)
+                  if (error) {
+                    window.alert(`Could not move equipment: ${error.message}`)
+                    return
+                  }
+                  await refreshData()
+                } else {
+                  updateState((current) => ({
+                    ...current,
+                    equipment: current.equipment.map((item) => item.id === equipmentId ? { ...item, associatedJobId: job.id } : item),
+                  }))
+                }
+              }}
+            >
               <div className="job-card-heading">
                 <div>
                   <button
@@ -2785,7 +2847,15 @@ function JobsPage() {
                     {jobEquipment.length ? (
                       <div className="job-equipment-list">
                         {jobEquipment.map((item) => (
-                          <div key={item.id} className="job-equipment-card text-sm">
+                          <div
+                            key={item.id}
+                            className="job-equipment-card text-sm cursor-move"
+                            draggable
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = 'move'
+                              event.dataTransfer.setData('application/x-equipment-id', item.id)
+                            }}
+                          >
                             <p className="font-semibold text-slate-900">{item.manufacturer} {item.model} · {item.category}</p>
                             <p className="job-equipment-meta">
                               Ref {item.equipmentId} · Serial {item.serialNumber || 'not set'} · Qty {item.quantity}
@@ -3569,8 +3639,11 @@ function ProfitExpensesPage() {
   })
   const monthExpenses = appState.expenses.filter((expense) => expense.expenseDate.startsWith(selectedMonth))
   const monthlyBilledRevenue = monthInvoices.reduce((total, invoice) => total + invoice.subtotal, 0)
+  const monthlyBilledVat = monthInvoices.reduce((total, invoice) => total + invoice.vat, 0)
   const monthlyCashReceived = monthPayments.reduce((total, payment) => total + payment.amount, 0)
   const monthlyExpenses = monthExpenses.reduce((total, expense) => total + expense.amount, 0)
+  const monthlyExpenseSubtotal = monthExpenses.reduce((total, expense) => total + (expense.subtotal || 0), 0)
+  const monthlyExpenseVat = monthExpenses.reduce((total, expense) => total + (expense.vat || 0), 0)
   const customerOptions = [{ value: '', label: 'Select customer' }, ...appState.customers.map((customer) => ({ value: customer.id, label: customer.fullName }))]
   const jobOptions = [{ value: '', label: 'Select job' }, ...appState.jobs.map((job) => ({ value: job.id, label: `${job.jobReference} — ${job.customer}` }))]
   const selectedExpenseJob = appState.jobs.find((job) => job.id === expenseJobId)
@@ -3879,12 +3952,14 @@ function ProfitExpensesPage() {
             setAdvisorMessages([])
           }} className="input max-w-56" />
         </div>
-        <p className="max-w-2xl text-xs text-slate-500">Billed revenue excludes VAT; cash received uses recorded payments. Profit includes only expenses entered and linked to jobs.</p>
+        <p className="max-w-2xl text-xs text-slate-500">Billed revenue excludes VAT; expense totals include VAT. Profit is billed revenue less the full expense amount, including VAT.</p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
         <StatCard icon={FileText} title="Billed revenue (ex VAT)" value={formatCurrency(monthlyBilledRevenue)} subtitle="Invoices dated this month" color="blue" />
+        <StatCard icon={FileText} title="Billed VAT" value={formatCurrency(monthlyBilledVat)} subtitle="VAT collected on invoices" color="gold" />
         <StatCard icon={CreditCard} title="Cash received" value={formatCurrency(monthlyCashReceived)} subtitle="Payments dated this month" color="green" />
         <StatCard icon={Wrench} title="Job expenses" value={formatCurrency(monthlyExpenses)} subtitle="Expenses dated this month" color="red" />
+        <StatCard icon={Wrench} title="Expense VAT" value={formatCurrency(monthlyExpenseVat)} subtitle={`${formatCurrency(monthlyExpenseSubtotal)} ex VAT`} color="gold" />
         <StatCard icon={CircleDollarSign} title="Billed net profit" value={formatCurrency(monthlyBilledRevenue - monthlyExpenses)} subtitle="Billed revenue less expenses" color="green" />
         <StatCard icon={CircleDollarSign} title="Cash net profit" value={formatCurrency(monthlyCashReceived - monthlyExpenses)} subtitle="Cash received less expenses" color="blue" />
       </div>
@@ -3923,7 +3998,7 @@ function ProfitExpensesPage() {
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-slate-200 text-slate-500">
-              <tr><th className="py-3 pr-4 font-medium">Date</th><th className="py-3 pr-4 font-medium">Job</th><th className="py-3 pr-4 font-medium">Category</th><th className="py-3 pr-4 font-medium">Description</th><th className="py-3 pr-4 font-medium">Amount</th><th className="py-3 font-medium">Action</th></tr>
+              <tr><th className="py-3 pr-4 font-medium">Date</th><th className="py-3 pr-4 font-medium">Job</th><th className="py-3 pr-4 font-medium">Category</th><th className="py-3 pr-4 font-medium">Description</th><th className="py-3 pr-4 font-medium">Ex VAT</th><th className="py-3 pr-4 font-medium">VAT</th><th className="py-3 pr-4 font-medium">Total</th><th className="py-3 font-medium">Action</th></tr>
             </thead>
             <tbody>
               {monthExpenses.map((expense) => (
@@ -3932,11 +4007,13 @@ function ProfitExpensesPage() {
                   <td className="py-3 pr-4">{appState.jobs.find((job) => job.id === expense.jobId)?.jobReference ?? 'Unknown job'}</td>
                   <td className="py-3 pr-4">{expense.category}</td>
                   <td className="py-3 pr-4">{expense.description || '—'}</td>
+                  <td className="py-3 pr-4">{formatCurrency(expense.subtotal || 0)}</td>
+                  <td className="py-3 pr-4">{formatCurrency(expense.vat || 0)}</td>
                   <td className="py-3 pr-4">{formatCurrency(expense.amount)}</td>
                   <td className="py-3"><button type="button" className="text-sm text-red-600 hover:underline" onClick={() => deleteExpense(expense)}>Delete</button></td>
                 </tr>
               ))}
-              {monthExpenses.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-500">No expenses recorded for this month.</td></tr>}
+              {monthExpenses.length === 0 && <tr><td colSpan={8} className="py-6 text-center text-slate-500">No expenses recorded for this month.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -4147,6 +4224,7 @@ function RecordActions({
   toPayload,
   onLocalSave,
   onLocalDelete,
+  jobOptions,
 }: {
   tableName: string
   recordId: string
@@ -4156,6 +4234,7 @@ function RecordActions({
   toPayload?: (values: Record<string, string>) => Record<string, unknown>
   onLocalSave: (values: Record<string, string>) => void
   onLocalDelete: () => void
+  jobOptions?: Array<{ value: string; label: string }>
 }) {
   const { refreshData } = useAppContext()
   const [formValues, setFormValues] = useState<Record<string, string>>({})
@@ -4244,6 +4323,8 @@ function RecordActions({
           saveLabel="Save changes"
           onClose={() => setEditing(false)}
           onSave={save}
+          jobOptions={title === 'equipment' ? jobOptions : undefined}
+          equipmentId={title === 'equipment' ? recordId : undefined}
         />
       )}
     </div>
@@ -4257,6 +4338,8 @@ function QuickCreateModal({
   onSave,
   initialValues,
   saveLabel = 'Save',
+  jobOptions,
+  equipmentId,
 }: {
   title: string
   fields: QuickFormField[]
@@ -4264,6 +4347,8 @@ function QuickCreateModal({
   onSave: (values: Record<string, string>) => Promise<void>
   initialValues?: Record<string, string>
   saveLabel?: string
+  jobOptions?: Array<{ value: string; label: string }>
+  equipmentId?: string
 }) {
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(fields.map((field) => [field.name, initialValues?.[field.name] ?? (field.type === 'select' ? field.options?.[0]?.value ?? '' : '')])),
@@ -4293,6 +4378,43 @@ function QuickCreateModal({
           <button type="button" aria-label="Close form" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" onClick={onClose}><X size={18} /></button>
         </div>
         <form className="space-y-4" onSubmit={handleSubmit}>
+          {jobOptions && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+              <p className="mb-2 text-sm font-semibold text-slate-800">Assign this equipment to a job</p>
+              <p className="mb-3 text-xs text-slate-500">Drag this card onto a job below, or use the job dropdown.</p>
+              <div
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.setData('application/x-equipment-id', equipmentId ?? '')
+                }}
+                className="mb-3 cursor-move rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm font-medium text-slate-800"
+              >
+                Hold and drag this equipment
+              </div>
+              <div className="grid max-h-44 gap-2 overflow-y-auto sm:grid-cols-2">
+                {jobOptions.map((job) => (
+                  <div
+                    key={job.value}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'move'
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      const droppedEquipmentId = event.dataTransfer.getData('application/x-equipment-id')
+                      if (droppedEquipmentId === equipmentId) {
+                        setValues((current) => ({ ...current, associated_job_id: job.value }))
+                      }
+                    }}
+                    className="rounded-lg border border-dashed border-emerald-300 bg-white px-3 py-2 text-sm text-slate-700"
+                  >
+                    {job.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             {fields.map((field) => (
               <label key={field.name} className={field.type === 'textarea' ? 'block sm:col-span-2' : 'block'}>
