@@ -532,11 +532,12 @@ const prepareFinancialDocument = async (file: File) => {
   return { mimeType, imageBase64 }
 }
 
-const getEdgeFunctionError = async (error: unknown) => {
-  if (!(error instanceof Error)) return 'The Edge Function returned an unexpected error.'
-
-  const context = (error as Error & { context?: Response }).context
-  if (context) {
+const getSupabaseErrorMessage = async (error: unknown) => {
+  const errorDetails = error !== null && typeof error === 'object'
+    ? error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown; context?: unknown }
+    : undefined
+  const context = errorDetails?.context
+  if (context instanceof Response) {
     try {
       const body = await context.clone().json() as { error?: unknown }
       if (typeof body.error === 'string' && body.error.trim()) {
@@ -547,12 +548,18 @@ const getEdgeFunctionError = async (error: unknown) => {
         const text = await context.clone().text()
         if (text.trim()) return text.trim()
       } catch {
-        // Keep the original error message if the response has no readable body.
+        // Keep the original Supabase error if the response has no readable body.
       }
     }
   }
 
-  return error.message
+  const messageParts = [errorDetails?.message, errorDetails?.details, errorDetails?.hint]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const message = messageParts.join(' ')
+  const code = errorDetails?.code
+  if (message) return typeof code === 'string' && code ? `${message} (${code})` : message
+
+  return 'An unexpected Supabase error occurred.'
 }
 
 const getStatusClass = (status: string) => {
@@ -1998,7 +2005,7 @@ function EquipmentPage() {
         technician_id: values.technicianId || null,
         notes: values.notes || null,
       })
-      if (error) throw new Error(await getEdgeFunctionError(error))
+      if (error) throw new Error(await getSupabaseErrorMessage(error))
       if (!await refreshData()) throw new Error('Equipment was saved, but the latest records could not be reloaded.')
       return
     }
@@ -2288,7 +2295,7 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
           vat: item.vatAmount,
           amount: item.amount,
         }))).select('*')
-        if (error) throw new Error(await getEdgeFunctionError(error))
+        if (error) throw new Error(await getSupabaseErrorMessage(error))
         if (!data || data.length !== preparedItems.length) {
           throw new Error('Expenses were saved, but the complete set of records was not returned.')
         }
@@ -2342,7 +2349,7 @@ function JobExpenseEntrySheet({ job }: { job: Job }) {
       const { data, error } = await supabase.functions.invoke<{ extraction: FinancialDocumentExtraction }>('extract-financial-document', {
         body: { documentType: 'supplier_receipt', mimeType, imageBase64 },
       })
-      if (error) throw new Error(await getEdgeFunctionError(error))
+      if (error) throw new Error(await getSupabaseErrorMessage(error))
       const extraction = data?.extraction
       if (!extraction || !Number.isFinite(extraction.total) || extraction.total <= 0) {
         throw new Error('The scanner returned incomplete amounts. Try a clearer image or enter the values manually.')
@@ -3936,7 +3943,7 @@ function ProfitExpensesPage() {
       const { data, error } = await supabase.functions.invoke<{ extraction: FinancialDocumentExtraction }>('extract-financial-document', {
         body: { documentType, mimeType, imageBase64 },
       })
-      if (error) throw new Error(await getEdgeFunctionError(error))
+      if (error) throw new Error(await getSupabaseErrorMessage(error))
       const extracted = data?.extraction
       if (!extracted || !Number.isFinite(extracted.total) || extracted.total < 0) {
         throw new Error('The scanner returned incomplete amounts. Try a clearer image or enter the values manually.')
