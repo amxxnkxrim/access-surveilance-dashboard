@@ -495,6 +495,8 @@ const readBlobAsBase64 = (blob: Blob) => new Promise<string>((resolve, reject) =
   reader.readAsDataURL(blob)
 })
 
+const maxFinancialDocumentBase64Length = 5.5 * 1024 * 1024
+
 const prepareFinancialDocument = async (file: File) => {
   let documentBlob: Blob = file
   let mimeType = file.type
@@ -522,7 +524,12 @@ const prepareFinancialDocument = async (file: File) => {
     mimeType = 'image/jpeg'
   }
 
-  return { mimeType, imageBase64: await readBlobAsBase64(documentBlob) }
+  const imageBase64 = await readBlobAsBase64(documentBlob)
+  if (imageBase64.length > maxFinancialDocumentBase64Length) {
+    throw new Error('This document is too large to send for scanning. Choose a smaller image or PDF.')
+  }
+
+  return { mimeType, imageBase64 }
 }
 
 const getEdgeFunctionError = async (error: unknown) => {
@@ -3929,7 +3936,7 @@ function ProfitExpensesPage() {
       const { data, error } = await supabase.functions.invoke<{ extraction: FinancialDocumentExtraction }>('extract-financial-document', {
         body: { documentType, mimeType, imageBase64 },
       })
-      if (error) throw new Error(error.message)
+      if (error) throw new Error(await getEdgeFunctionError(error))
       const extracted = data?.extraction
       if (!extracted || !Number.isFinite(extracted.total) || extracted.total < 0) {
         throw new Error('The scanner returned incomplete amounts. Try a clearer image or enter the values manually.')

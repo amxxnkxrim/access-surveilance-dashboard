@@ -7,6 +7,7 @@ const corsHeaders = {
 
 const expenseCategories = ['Fuel', '20mm pipe', '25mm pipe', 'Cameras', 'Sprag', 'Other equipment', 'Wages', 'Other']
 const supportedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+const maxDocumentBase64Length = 5.5 * 1024 * 1024
 
 const jsonResponse = (status: number, body: Record<string, unknown>) =>
   new Response(JSON.stringify(body), { status, headers: corsHeaders })
@@ -89,8 +90,14 @@ const callGeminiWithRetry = async (
 ) => {
   let lastResponse: Response | null = null
   const retryDelays = [1500, 3000, 6000]
+  const deadline = Date.now() + 55_000
 
   for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+    const remainingTime = deadline - Date.now()
+    if (remainingTime <= 0) {
+      throw new DOMException('The request timed out.', 'TimeoutError')
+    }
+
     let response: Response
     try {
       response = await fetch(
@@ -98,13 +105,13 @@ const callGeminiWithRetry = async (
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(45_000),
+          signal: AbortSignal.timeout(Math.min(45_000, remainingTime)),
           body: JSON.stringify(body),
         },
       )
     } catch (error) {
       if (error instanceof DOMException && error.name === 'TimeoutError') {
-        if (attempt < retryDelays.length) {
+        if (attempt < retryDelays.length && Date.now() + retryDelays[attempt] < deadline) {
           await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]))
           continue
         }
@@ -115,7 +122,11 @@ const callGeminiWithRetry = async (
     lastResponse = response
     if (response.ok) return response
 
-    if (![429, 503, 502, 504].includes(response.status) || attempt === retryDelays.length) {
+    if (
+      ![429, 503, 502, 504].includes(response.status)
+      || attempt === retryDelays.length
+      || Date.now() + retryDelays[attempt] >= deadline
+    ) {
       return response
     }
 
@@ -244,8 +255,8 @@ Deno.serve(async (request) => {
     if (typeof mimeType !== 'string' || !supportedMimeTypes.includes(mimeType)) {
       return jsonResponse(400, { error: 'Use a JPEG, PNG, WebP, or PDF document.' })
     }
-    if (typeof imageBase64 !== 'string' || !imageBase64.length || imageBase64.length > 14 * 1024 * 1024) {
-      return jsonResponse(413, { error: 'The document is empty or exceeds the 10 MB limit.' })
+    if (typeof imageBase64 !== 'string' || !imageBase64.length || imageBase64.length > maxDocumentBase64Length) {
+      return jsonResponse(413, { error: 'The document is empty or too large to scan. Choose a smaller image or PDF.' })
     }
 
     const documentLabel = documentType === 'customer_invoice' ? 'customer sales invoice' : 'supplier expense receipt or invoice'
