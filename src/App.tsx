@@ -1220,7 +1220,7 @@ function AppLayout() {
   return (
     <div className="dashboard-shell min-h-screen bg-slate-100 text-slate-800">
       <div className="flex min-h-screen">
-        <aside className={`dashboard-sidebar fixed inset-y-0 left-0 z-30 w-72 border-r border-slate-200 bg-[#13251F] text-slate-100 transition-transform duration-200 md:static md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <aside className={`dashboard-sidebar fixed inset-y-0 left-0 z-30 flex h-screen w-72 flex-col overflow-y-auto border-r border-slate-200 bg-[#13251F] text-slate-100 transition-transform duration-200 md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <div className="flex h-20 items-center justify-between border-b border-slate-700 px-5">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#163F2F] text-sm font-bold">AS</div>
@@ -1262,7 +1262,7 @@ function AppLayout() {
           </div>
         </aside>
 
-        <div className="flex-1">
+        <div className="min-w-0 flex-1 md:ml-72">
           <header className="dashboard-header sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur-sm">
             <div className="flex items-center justify-between gap-4 px-4 py-3 md:px-6">
               <div className="flex items-center gap-3">
@@ -4223,7 +4223,7 @@ function ProfitExpensesPage() {
         </div>
         <p className="max-w-2xl text-xs text-slate-500">Billed revenue excludes VAT; expense totals include VAT. Profit is billed revenue less the full expense amount, including VAT.</p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <StatCard icon={FileText} title="Billed revenue (ex VAT)" value={formatCurrency(monthlyBilledRevenue)} subtitle="Invoices dated this month" color="blue" />
         <StatCard icon={FileText} title="Billed VAT" value={formatCurrency(monthlyBilledVat)} subtitle="VAT collected on invoices" color="gold" />
         <StatCard icon={CreditCard} title="Cash received" value={formatCurrency(monthlyCashReceived)} subtitle="Payments dated this month" color="green" />
@@ -4790,15 +4790,13 @@ function StatCard({ icon: Icon, title, value, subtitle, color, onClick }: { icon
       className={`dashboard-stat-card dashboard-stat-card--${color} w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm ${onClick ? 'cursor-pointer' : ''}`}
       disabled={!onClick}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="dashboard-stat-label text-sm text-slate-500">{title}</p>
-          <p className="dashboard-stat-value mt-2 text-3xl font-semibold text-slate-900">{value}</p>
-        </div>
+      <div className="flex items-start justify-between gap-3">
+        <p className="dashboard-stat-label text-sm text-slate-500">{title}</p>
         <div className="dashboard-stat-icon flex h-12 w-12 items-center justify-center rounded-xl">
           <Icon size={22} />
         </div>
       </div>
+      <p className="dashboard-stat-value mt-3 text-3xl font-semibold text-slate-900">{value}</p>
       <p className="dashboard-stat-subtitle mt-3 text-xs text-slate-500">{subtitle}</p>
     </button>
   )
